@@ -7,7 +7,7 @@ import {useLocale} from '@/lib/arkan-client';
 import {staffLogout} from './staff-access';
 import {PushEnable} from './trip-status';
 
-export type AdminTab='overview'|'trips'|'bookings'|'scan'|'manifest'|'station'|'bus'|'driver'|'schedule'|'reports'|'settings'|'staff'|'more';
+export type AdminTab='overview'|'trips'|'bookings'|'scan'|'manifest'|'station'|'bus'|'driver'|'schedule'|'reports'|'settings'|'staff'|'packages'|'more';
 export type AdminNavItem=[AdminTab,string,LucideIcon];
 
 const desktopQuery='(min-width: 1024px)';
@@ -46,7 +46,7 @@ export function AdminMorePage({items,user,isAdmin,onSelect}:{items:AdminNavItem[
   const groups:{title:string;keys:AdminTab[]}[]=isAdmin?[
     {title:t('الركاب والتقارير','Passengers & reports'),keys:['manifest','reports']},
     {title:t('الأسطول والمحطات','Fleet & stations'),keys:['driver','bus','station','schedule']},
-    {title:t('إدارة النظام','Administration'),keys:['staff','settings']},
+    {title:t('إدارة النظام','Administration'),keys:['packages','staff','settings']},
   ]:[];
   const descriptions:Partial<Record<AdminTab,string>>={
     manifest:t('كشف الرحلة وحالة صعود الركاب','Trip manifest and boarding status'),
@@ -56,6 +56,7 @@ export function AdminMorePage({items,user,isAdmin,onSelect}:{items:AdminNavItem[
     station:t('نقاط المغادرة والوصول','Departure and arrival points'),
     schedule:t('مواعيد الرحلات المتكررة','Recurring departure schedules'),
     staff:t('حسابات الدخول والصلاحيات','Sign-in accounts and permissions'),
+    packages:t('الباقات والأسعار والتفاصيل والظهور','Packages, prices, details and visibility'),
     settings:t('الأسعار والتواصل وسياسة الإلغاء','Fares, contact and cancellation policy'),
   };
   const Arrow=en?ChevronRight:ChevronLeft;
