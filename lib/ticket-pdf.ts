@@ -1,3 +1,4 @@
+import {attendance,passengerTickets,passengerTitles,identityTypes,arabicStatus} from './ticket-details';
 import type {jsPDF} from 'jspdf';
 async function fontData(signal?:AbortSignal){
   const controller=new AbortController();
@@ -18,7 +19,38 @@ async function fontData(signal?:AbortSignal){
 async function document(signal?:AbortSignal){const[{jsPDF},buf]=await Promise.all([import('jspdf'),fontData(signal)]);if(signal?.aborted)throw new DOMException('Aborted','AbortError');const pdf=new jsPDF();let raw='';new Uint8Array(buf).forEach(x=>raw+=String.fromCharCode(x));pdf.addFileToVFS('Arabic.ttf',btoa(raw));pdf.addFont('Arabic.ttf','Arabic','normal');pdf.setFont('Arabic');return pdf}
 // Keep Allah as connected letters: the PDF font lacks jsPDF's U+FDF2 ligature.
 function line(p:jsPDF,s:string,x:number,y:number,size=11){s=s.replace(/\ufdf2/g,'الله').replace(/الله/g,'ا\u200cلله');p.setFontSize(size);const ar=/[\u0600-\u06ff]/.test(s);p.setR2L(false);p.text(s,x,y,{align:ar?'right':'left'});p.setR2L(false)}
-export async function ticketPDF(booking:any,stations:any[],buses:any[]=[],signal?:AbortSignal):Promise<Blob>{if(!booking?.tickets?.length)throw new Error('PDF_NO_TICKETS');const[p,{default:QR}]=await Promise.all([document(signal),import('qrcode')]);for(let i=0;i<booking.tickets.length;i++){if(signal?.aborted)throw new DOMException('Aborted','AbortError');if(i)p.addPage();const t=booking.tickets[i],station=(key:string)=>stations.find(s=>s.id===key)?.en||key;p.setFillColor('#173f35');p.rect(0,0,210,38,'F');p.setTextColor('#ffffff');line(p,'ARKAN AL-MASAR',18,20,22);line(p,'أركان المسار',192,32,15);p.setTextColor('#183328');line(p,booking.status==='test'?'TEST TICKET - NO PAYMENT':'BOOKING REQUEST SUMMARY',18,52,12);line(p,booking.code,18,63,15);line(p,t.name,/[\u0600-\u06ff]/.test(t.name)?190:18,80,17);const rows=[['ID',t.maskedId],['From',station(t.from_station)],['To',station(t.to_station)],['Date',t.date],['Departure (Saudi time)',t.time],['Seat',String(t.seat)],['Bus',t.bus_plate||buses.find(b=>b.id===t.bus)?.plate||t.bus],['Booking status',booking.status==='cancelled'?'Cancelled':booking.status==='test'?'Test ticket - no payment':booking.status==='paid'?'Paid and confirmed':'Awaiting payment and confirmation']];rows.forEach(([k,v],j)=>{line(p,k,18,99+j*12);line(p,String(v),90,99+j*12)});p.addImage(await QR.toDataURL(t.id,{width:400,margin:2}),'PNG',75,205,60,60);line(p,'Ticket code for manual entry',18,272,9);line(p,'رمز التذكرة للإدخال اليدوي',192,272,9);line(p,t.id,18,279,8);line(p,booking.status==='test'?'Boarding rehearsal only. No payment collected. Not valid for passenger travel.':booking.status==='paid'?'Keep this booking reference private. Arrive 20 minutes before departure.':booking.status==='cancelled'?'This booking has been cancelled. This summary cannot be used for boarding.':'Keep this booking reference private. Payment and confirmation are required.',18,286,9)}return p.output('blob')}
+export async function ticketPDF(booking:any,stations:any[],buses:any[]=[],signal?:AbortSignal):Promise<Blob>{
+if(!booking?.tickets?.length)throw new Error('PDF_NO_TICKETS');
+const[p,{default:QR}]=await Promise.all([document(signal),import('qrcode')]);
+const groups=passengerTickets(booking.tickets);
+function right(text:string,x:number,y:number,size=11){p.setFontSize(size);p.setR2L(false);p.text(text.replace(/\ufdf2/g,'الله').replace(/الله/g,'ا\u200cلله'),x,y,{align:'right'})}
+function wrapped(text:string,x:number,y:number,width:number,size=11,maxLines=2){p.setFontSize(size);const lines=p.splitTextToSize(text,width);lines.slice(0,maxLines).forEach((value:string,i:number)=>right(value,x,y+i*5,size))}
+for(let i=0;i<groups.length;i++){
+if(signal?.aborted)throw new DOMException('Aborted','AbortError');if(i)p.addPage();const legs=groups[i],passenger=legs[0];
+p.setFillColor('#173f35');p.rect(0,0,210,34,'F');p.setTextColor('#ffffff');right('أركان المسار',192,17,22);right(legs.length>1?'تذكرة ذهاب وعودة':'تذكرة ذهاب',192,27,11);
+p.setTextColor('#183328');right('رقم الحجز',192,44,9);line(p,booking.code,16,44,12);right(arabicStatus(booking.status),192,53,12);
+wrapped((passengerTitles.find(x=>x.value===passenger.title)?.ar||'')+' '+passenger.name,192,65,176,14,2);
+right(identityTypes.find(x=>x.value===passenger.identityType)?.ar||'وثيقة الهوية',192,80,10);line(p,passenger.maskedId||'—',16,80,11);
+right(booking.paymentMethod==='cash'?'طريقة الدفع: نقدًا — كاش':'حالة الدفع: '+arabicStatus(booking.status),192,89,10);
+for(let j=0;j<legs.length;j++){
+const ticket=legs[j],at=attendance(ticket.date,ticket.time),y=98+j*80;
+p.setFillColor('#f3f5ef');p.roundedRect(14,y,182,75,3,3,'F');right(j?'رحلة العودة':'رحلة الذهاب',190,y+9,13);
+const station=(key:string)=>stations.find(s=>s.id===key)?.ar||key;
+right('من',190,y+18,8);wrapped(station(ticket.from_station),190,y+24,117,10);
+right('إلى',190,y+37,8);wrapped(station(ticket.to_station),190,y+43,117,10);
+right('تاريخ الرحلة',190,y+57,8);right(ticket.date,190,y+64,10);
+right('الحضور',151,y+57,8);right(at.time,151,y+64,11);
+if(at.date!==ticket.date)right(at.date,151,y+70,7);
+right('الانطلاق',118,y+57,8);right(ticket.time,118,y+64,11);
+right('المقعد',83,y+57,8);right(String(ticket.seat),83,y+64,11);
+p.addImage(await QR.toDataURL(ticket.id,{width:400,margin:2}),'PNG',18,y+8,43,43);
+right('الحافلة',59,y+57,8);wrapped(String(ticket.bus_plate||buses.find(b=>b.id===ticket.bus)?.plate||ticket.bus),59,y+64,37,8,1);
+right('رمز الصعود اليدوي',190,y+73,6);line(p,ticket.id,18,y+73,5.5);
+}
+p.setTextColor('#53614b');right('جميع المواعيد بتوقيت السعودية. الحضور قبل الانطلاق بساعة.',192,266,9);
+right(booking.status==='paid'?'أبرز التذكرة ووثيقة الهوية الأصلية عند الصعود.':booking.status==='cancelled'?'التذكرة ملغاة وغير صالحة للصعود.':'يلزم تأكيد استلام الدفع من الإدارة قبل السماح بالصعود.',192,274,9);
+right('الشركة غير مسؤولة عن أي أغراض تُترك داخل الحافلة.',192,282,9);
+}return p.output('blob')}
 export async function manifestPDF(trip:any,passengers:any[],driver:any,bus:any,stations:any[]){
 const p=await document();
 const heading=()=>{

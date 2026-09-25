@@ -35,18 +35,18 @@ export default function BookingSummaryDownload({booking, stations}: {booking: an
   return <div className="summary-download" aria-busy={!url && !failed}>
     {url ? <>
       <a className="primary" href={url} download={`${booking.code}.pdf`} target="_blank" rel="noopener noreferrer">
-        <Download size={18}/>{t('تحميل ملخص الحجز PDF', 'Download booking summary PDF')}
+        <Download size={18}/>{t('تحميل التذكرة بالعربية PDF', 'Download Arabic ticket PDF')}
       </a>
       <a className="text-button" href={url} target="_blank" rel="noopener noreferrer">
-        <ExternalLink size={17}/>{t('فتح الملخص', 'Open summary')}
+        <ExternalLink size={17}/>{t('فتح التذكرة', 'Open ticket')}
       </a>
     </> : failed ? <>
-      <p className="pdf-download-error" role="alert">{t('تعذّر تجهيز الملخص. حاول مرة أخرى.', 'Unable to prepare the summary. Please try again.')}</p>
+      <p className="pdf-download-error" role="alert">{t('تعذّر تجهيز التذكرة. حاول مرة أخرى.', 'Unable to prepare the ticket. Please try again.')}</p>
       <button type="button" className="primary" onClick={() => {setFailed(false); setAttempt(n => n + 1);}}>
         <RotateCcw size={18}/>{t('إعادة المحاولة', 'Try again')}
       </button>
     </> : <button type="button" className="primary" disabled>
-      <LoaderCircle className="animate-spin" size={18}/><span role="status">{t('جارٍ تجهيز الملخص…', 'Preparing summary…')}</span>
+      <LoaderCircle className="animate-spin" size={18}/><span role="status">{t('جارٍ تجهيز التذكرة…', 'Preparing ticket…')}</span>
     </button>}
   </div>;
 }

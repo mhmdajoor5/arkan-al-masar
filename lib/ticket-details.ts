@@ -1,0 +1,5 @@
+export const passengerTitles=[{value:'mr',ar:'السيد',en:'Mr'},{value:'mrs',ar:'السيدة',en:'Mrs'},{value:'child',ar:'طفل',en:'Child'}];
+export const identityTypes=[{value:'national_id',ar:'هوية وطنية',en:'National ID'},{value:'iqama',ar:'إقامة',en:'Iqama'},{value:'passport',ar:'جواز سفر',en:'Passport'}];
+export function attendance(date:string,time:string){const departure=Date.parse(`${date}T${time}:00+03:00`);if(!Number.isFinite(departure))return{date,time:'—'};const local=new Date(departure-3600000+10800000).toISOString();return{date:local.slice(0,10),time:local.slice(11,16)}}
+export function passengerTickets(tickets:any[]){const groups=new Map<string,any[]>();for(const ticket of tickets){const key=ticket.passengerIndex===undefined?ticket.id:String(ticket.passengerIndex);groups.set(key,[...(groups.get(key)||[]),ticket])}return [...groups.values()].map(legs=>legs.sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time)))}
+export const arabicStatus=(status:string)=>status==='paid'?'مدفوع — مؤكد':status==='cancelled'?'ملغي':status==='test'?'تذكرة اختبار':'بانتظار الدفع';
