@@ -1,0 +1,4 @@
+self.addEventListener('install',()=>self.skipWaiting());
+self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));
+self.addEventListener('push',event=>{let data={};try{data=event.data?.json()||{}}catch{}const url=['/admin','/my-bookings'].includes(data.url)?data.url:'/my-bookings';event.waitUntil(self.registration.showNotification(data.title||'أركان المسار',{body:data.body||'لديك تحديث على حالة الرحلة',tag:data.tag||'arkan-trip',icon:'/brand/logo-forest.png',data:{url},dir:'auto',requireInteraction:false}));});
+self.addEventListener('notificationclick',event=>{event.notification.close();const url=new URL(event.notification.data?.url||'/my-bookings',self.location.origin).href;event.waitUntil(self.clients.matchAll({type:'window',includeUncontrolled:true}).then(async windows=>{const existing=windows.find(client=>client.url===url);if(existing)return existing.focus();return self.clients.openWindow(url)}));});
