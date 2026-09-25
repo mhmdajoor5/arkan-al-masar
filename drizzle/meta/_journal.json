@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1790271028997,
+      "tag": "0000_yielding_silver_centurion",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1790290786010,
+      "tag": "0001_rainy_santa_claus",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1790291010252,
+      "tag": "0002_sour_scarecrow",
+      "breakpoints": true
+    }
+  ]
+}
