@@ -44,7 +44,7 @@ if(at.date!==ticket.date)right(at.date,151,y+70,7);
 right('الانطلاق',118,y+57,8);right(ticket.time,118,y+64,11);
 right('المقعد',83,y+57,8);right(String(ticket.seat),83,y+64,11);
 p.addImage(await QR.toDataURL(ticket.id,{width:400,margin:2}),'PNG',18,y+8,43,43);
-right('الحافلة',59,y+57,8);wrapped(String(ticket.bus_plate||buses.find(b=>b.id===ticket.bus)?.plate||ticket.bus),59,y+64,37,8,1);
+right('الحافلة',59,y+57,8);wrapped(String([ticket.bus_name,ticket.bus_plate].filter(Boolean).join(' · ')||buses.find(b=>b.id===ticket.bus)?.plate||ticket.bus),59,y+64,37,8,2);
 right('رمز الصعود اليدوي',190,y+73,6);line(p,ticket.id,18,y+73,5.5);
 }
 p.setTextColor('#53614b');right('جميع المواعيد بتوقيت السعودية. الحضور قبل الانطلاق بساعة.',192,266,9);
@@ -59,7 +59,7 @@ const heading=()=>{
   p.setFontSize(10);let y=39;
   const route=(stations.find(s=>s.id===trip.from_station)?.en||trip.from_station)+' > '+(stations.find(s=>s.id===trip.to_station)?.en||trip.to_station);
   for(const text of p.splitTextToSize(route,178)){line(p,text,15,y,10);y+=5}
-  y+=6;line(p,'Bus: '+(bus?.plate||trip.bus)+' | Driver ID: '+(driver?.nationalId||'-'),15,y,10);y+=9;
+  y+=6;const busText='الحافلة: '+(bus?.name||trip.bus)+' · '+(bus?.plate||'')+' · '+(bus?.seats||trip.capacity||49)+' مقعدًا';for(const text of p.splitTextToSize(busText,178)){line(p,text,195,y,10);y+=5}line(p,'Driver ID: '+(driver?.nationalId||'-'),15,y,10);y+=9;
   line(p,driver?.name||'Driver not assigned',/[\u0600-\u06ff]/.test(driver?.name||'')?190:15,y,10);y+=13;
   p.setFillColor('#eee7db');p.rect(15,y-6,180,11,'F');
   line(p,'SEAT',18,y,9);line(p,'PASSENGER',35,y,9);line(p,'ID',120,y,9);line(p,'BOARDED',173,y,9);
