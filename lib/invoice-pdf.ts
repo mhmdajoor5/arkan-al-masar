@@ -59,11 +59,11 @@ export async function arabicManifestPDF(trip:any,passengers:any[],driver:any,bus
   y=wrap(p,'الحافلة: '+(bus?.name||trip.bus)+' — '+(bus?.plate||'')+' — '+(bus?.seats||trip.capacity||49)+' مقعدًا',194,y,178,10);
   y=wrap(p,'السائق: '+(driver?.name||'غير معيّن')+' — الهوية: '+(driver?.nationalId||'—'),194,y,178,10)+7;
   p.setFillColor('#eee7db');p.rect(16,y-6,178,11,'F');
-  right(p,'المقعد',190,y,9);right(p,'اسم المسافر',168,y,9);right(p,'رقم الهوية',83,y,9);right(p,'الصعود',37,y,9);return y+12;
+  right(p,'المقعد',190,y,9);right(p,'اسم المسافر',168,y,9);right(p,'رقم الهوية',105,y,9);right(p,'جوال العميل / الإضافي',73,y,8);right(p,'الصعود',29,y,8);return y+12;
  };
  let y=heading();
- for(const passenger of passengers){p.setFontSize(9);const lines=p.splitTextToSize(passenger.name,72),height=Math.max(11,lines.length*5+4);if(y+height>260){p.addPage();y=heading()}
-  right(p,String(passenger.seat),188,y,10);lines.forEach((s:string,n:number)=>right(p,s,168,y+n*5,9));right(p,passenger.national_id||'—',83,y,9);right(p,passenger.boarded?'نعم':'لا',34,y,9);y+=height;p.setDrawColor('#e7e9e2');p.line(16,y-5,194,y-5);
+ for(const passenger of passengers){p.setFontSize(9);const lines=p.splitTextToSize(passenger.name,54),height=Math.max(passenger.additionalMobile?17:11,lines.length*5+4);if(y+height>260){p.addPage();y=heading()}
+  right(p,String(passenger.seat),188,y,10);lines.forEach((s:string,n:number)=>right(p,s,168,y+n*5,9));right(p,passenger.national_id||'—',105,y,8);right(p,passenger.mobile||'—',73,y,8);if(passenger.additionalMobile)right(p,passenger.additionalMobile,73,y+5,8);right(p,passenger.boarded?'نعم':'لا',27,y,8);y+=height;p.setDrawColor('#e7e9e2');p.line(16,y-5,194,y-5);
  }
  if(y+8<263)right(p,'عدد الركاب: '+passengers.length+' — صعد: '+passengers.filter(v=>v.boarded).length,194,y+4,10);
  for(let page=1;page<=p.getNumberOfPages();page++){p.setPage(page);companyFooter(p,company,page,p.getNumberOfPages())}
