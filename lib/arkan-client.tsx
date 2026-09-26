@@ -12,3 +12,5 @@ export function dateAdd(n:number){return new Date(Date.now()+10800000+n*86400000
 export function money(n:number,en:boolean){return (n/100).toLocaleString(en?'en-SA':'ar-SA',{maximumFractionDigits:2})+' '+(en?'SAR':'ر.س')}
 export function displayDate(d:string,en:boolean){return new Date(d+'T12:00:00+03:00').toLocaleDateString(en?'en-GB':'ar-SA',{weekday:'short',day:'numeric',month:'long',calendar:'gregory'})}
 export function arrival(time:string){const [h,m]=time.split(':').map(Number);return `${String((h+Math.floor((m+90)/60))%24).padStart(2,'0')}:${String((m+90)%60).padStart(2,'0')}`}
+
+export function cityName(city:string,en=false,stations:any[]=[]){return city==='jeddah'?(en?'Jeddah':'جدة'):city==='makkah'?(en?'Makkah':'مكة المكرمة'):(en?stations.find(s=>s.city===city&&s.cityEn)?.cityEn:undefined)||city||'—'}
