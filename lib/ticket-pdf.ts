@@ -25,6 +25,7 @@ const[p,{default:QR}]=await Promise.all([document(signal),import('qrcode')]);
 const groups=passengerTickets(booking.tickets);
 function right(text:string,x:number,y:number,size=11){p.setFontSize(size);p.setR2L(false);p.text(text.replace(/\ufdf2/g,'الله').replace(/الله/g,'ا\u200cلله'),x,y,{align:'right'})}
 function wrapped(text:string,x:number,y:number,width:number,size=11,maxLines=2){p.setFontSize(size);const lines=p.splitTextToSize(text,width);lines.slice(0,maxLines).forEach((value:string,i:number)=>right(value,x,y+i*5,size))}
+if(booking.package){const v=booking.package;p.setTextColor('#173f35');right('أركان المسار — ملخص باقة النقل والإقامة',192,22,18);line(p,booking.code,16,35,12);right(arabicStatus(booking.status),192,35,12);const rows=[v.name,'الفندق: '+v.hotel,'نوع الغرفة: '+v.roomType,'الغرف: '+v.rooms+' — عدد الليالي: '+v.nights,'الدخول: '+v.checkIn,'المغادرة: '+v.checkOut,'عدد المسافرين: '+v.people,'سعر المسافر شامل النقل: '+v.personPrice+' ريال','سعر الغرفة لكامل الإقامة: '+v.roomPrice+' ريال','الإجمالي: '+(v.amount/100).toFixed(2)+' ريال','طريقة الدفع: نقدًا — كاش'];rows.forEach((text,i)=>wrapped(String(text),192,54+i*15,178,12,2));if(v.terms)wrapped('شروط الباقة: '+v.terms,192,228,178,10,8);p.addPage();}
 for(let i=0;i<groups.length;i++){
 if(signal?.aborted)throw new DOMException('Aborted','AbortError');if(i)p.addPage();const legs=groups[i],passenger=legs[0];
 p.setFillColor('#173f35');p.rect(0,0,210,34,'F');p.setTextColor('#ffffff');right('أركان المسار',192,17,22);right(legs.length>1?'تذكرة ذهاب وعودة':'تذكرة ذهاب',192,27,11);
