@@ -18,33 +18,8 @@ export function companyFooter(p:jsPDF,company:CompanyProfile,page:number,pages:n
  right(p,'صفحة '+page+' / '+pages,194,290,8);
 }
 export async function invoicePDF(data:any):Promise<Blob>{
- const i=data.invoice,p=await document(),company=i.seller;const{default:QR}=await import('qrcode');
- p.setFillColor('#173f35');p.rect(0,0,210,32,'F');p.setTextColor('#fff');fit(p,company.companyName,194,15,17);right(p,'فاتورة',194,25,11);
- p.setTextColor('#243c2a');p.setFontSize(10);p.text(invoiceNumber(i.sequence),16,42);right(p,'رقم الفاتورة',194,42);
- const date=new Date(i.issuedAt+10800000).toISOString().slice(0,19).replace('T',' ');
- right(p,'تاريخ الإصدار: '+date+' — توقيت السعودية',194,50,9);
- right(p,'الرقم الضريبي: '+company.taxNumber,194,58,10);right(p,'السجل / الرقم الموحد: '+company.companyRegistration,194,65,9);
- let y=wrap(p,'العنوان: '+company.companyAddress,194,73,178,9)+3;
- p.setFontSize(11);const customerLines=p.splitTextToSize('العميل: '+i.customer.name,166);const customerHeight=26+customerLines.length*6;
- p.setFillColor('#f3f5ef');p.roundedRect(16,y,178,customerHeight,3,3,'F');
- customerLines.forEach((s:string,n:number)=>right(p,s,188,y+9+n*6,11));right(p,'رقم الحجز: '+i.bookingCode,188,y+9+customerLines.length*6,10);
- p.setFontSize(9);p.text(i.customer.mobile,22,y+customerHeight-6);right(p,'طريقة الدفع: نقدًا — كاش',188,y+customerHeight-6,9);y+=customerHeight+10;
- right(p,'تفاصيل الخدمة',194,y,12);y+=8;
- y=wrap(p,i.description,194,y,178,11)+2;
- for(const d of i.details){if(y>206){p.addPage();p.setTextColor('#243c2a');fit(p,company.companyName,194,18,14);right(p,invoiceNumber(i.sequence),194,28,10);y=40}y=wrap(p,d,194,y,178,9)}
- if(y>181){p.addPage();p.setTextColor('#243c2a');fit(p,company.companyName,194,18,14);right(p,invoiceNumber(i.sequence),194,28,10);y=40}
- y+=5;p.setFillColor('#f3f5ef');p.roundedRect(90,y,104,42,3,3,'F');
- right(p,'المبلغ قبل الضريبة: '+amount(i.subtotal)+' ر.س',188,y+10,11);
- right(p,'ضريبة القيمة المضافة ١٥٪: '+amount(i.vat)+' ر.س',188,y+22,11);
- right(p,'الإجمالي شامل الضريبة: '+amount(i.total)+' ر.س',188,y+35,12);
- p.addImage(await QR.toDataURL(invoiceQR(i),{width:350,margin:2}),'PNG',16,y,38,38);
- right(p,'رمز بيانات الفاتورة',57,y+43,8);y+=54;
- right(p,'حالة الدفع الحالية: '+(data.paymentStatus==='paid'?'مدفوع':'غير مدفوع'),194,y,10);y+=7;
- if(data.bookingStatus==='cancelled'){right(p,'الحجز ملغى — هذه النسخة لا تثبت استرداد المبلغ.',194,y,9);y+=7}
- if(data.paymentStatus!=='paid'){right(p,'هذه الفاتورة لا تثبت استلام المبلغ.',194,y,9);y+=7}
- right(p,'الكميات: حجز واحد. التفاصيل أعلاه تشمل جميع خدمات الحجز.',194,y,8);
- for(let page=1;page<=p.getNumberOfPages();page++){p.setPage(page);companyFooter(p,company,page,p.getNumberOfPages())}
- return p.output('blob');
+ const {brandedInvoicePDF}=await import('./invoice-layout');
+ return brandedInvoicePDF(data,invoiceNumber(data.invoice.sequence),invoiceQR(data.invoice));
 }
 export async function arabicManifestPDF(trip:any,passengers:any[],driver:any,bus:any,stations:any[],profile?:CompanyProfile){
  const p=await document(),company=profile||companyProfile();
