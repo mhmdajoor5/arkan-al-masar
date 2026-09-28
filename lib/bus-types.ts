@@ -1,4 +1,6 @@
 export const busTypes=[{seats:49,ar:'حافلة ٤٩ مقعدًا',en:'49-seat bus'},{seats:24,ar:'حافلة ٢٤ مقعدًا',en:'24-seat bus'},{seats:13,ar:'حافلة ١٣ مقعدًا',en:'13-seat bus'}] as const;
 export function busName(bus:any,en=false){return (['أركان الكبيرة','أركان المتوسطة','أركان الصغيرة'].includes(bus?.name)?'':bus?.name)||busTypes.find(x=>x.seats===Number(bus?.seats))?.[en?'en':'ar']||bus?.id||''}
 export function busLabel(bus:any,en=false){return [busName(bus,en),bus?.plate].filter(Boolean).join(' · ')}
-export function seatRows(capacity:number){if(capacity===49)return [...Array.from({length:11},(_,i)=>[i*4+1,i*4+2,0,i*4+3,i*4+4]),[45,46,47,48,49]];if(capacity===24)return Array.from({length:6},(_,i)=>[i*4+1,i*4+2,0,i*4+3,i*4+4]);if(capacity===13)return [...Array.from({length:4},(_,i)=>[i*3+1,0,0,i*3+2,i*3+3]),[0,0,0,0,13]];return []}
+export function seatRows(capacity:number){if(capacity===49)return [...Array.from({length:11},(_,i)=>[i*4+1,i*4+2,0,i*4+3,i*4+4]),[45,46,47,48,49]];if(capacity===24)return Array.from({length:6},(_,i)=>[i*4+1,i*4+2,0,i*4+3,i*4+4]);if(capacity===13)return [...Array.from({length:4},(_,i)=>[i*3+1,0,0,i*3+2,i*3+3]),[0,0,0,0,13]];if(!(capacity>0))return [];
+ // Custom counts: rows of four with an aisle; a remainder of one to three seats fills the last row without using the aisle.
+ const rows=Array.from({length:Math.floor(capacity/4)},(_,i)=>[i*4+1,i*4+2,0,i*4+3,i*4+4]),rest=capacity%4,base=capacity-rest;if(rest)rows.push(rest===1?[base+1,0,0,0,0]:rest===2?[base+1,base+2,0,0,0]:[base+1,base+2,0,base+3,0]);return rows}
