@@ -7,7 +7,7 @@ import {useLocale} from '@/lib/arkan-client';
 import {staffLogout} from './staff-access';
 import {PushEnable} from './trip-status';
 
-export type AdminTab='overview'|'trips'|'bookings'|'scan'|'manifest'|'station'|'bus'|'driver'|'schedule'|'reports'|'settings'|'staff'|'private'|'packages'|'more';
+export type AdminTab='overview'|'trips'|'bookings'|'scan'|'manifest'|'station'|'bus'|'driver'|'schedule'|'reports'|'settings'|'staff'|'private'|'packages'|'hotels'|'finance'|'more';
 export type AdminNavItem=[AdminTab,string,LucideIcon];
 
 const desktopQuery='(min-width: 1024px)';
@@ -44,13 +44,14 @@ export function AdminMobileBack({onBack}:{onBack:()=>void}){
 export function AdminMorePage({items,user,isAdmin,onSelect}:{items:AdminNavItem[];user:{name:string;email:string};isAdmin:boolean;onSelect:(tab:AdminTab)=>void}){
   const {en,t}=useLocale();
   const groups:{title:string;keys:AdminTab[]}[]=isAdmin?[
-    {title:t('الركاب والتقارير','Passengers & reports'),keys:['manifest','reports']},
+    {title:t('الركاب والتقارير','Passengers & reports'),keys:['manifest','reports','finance']},
     {title:t('الأسطول والمحطات','Fleet & stations'),keys:['driver','bus','station','schedule']},
-    {title:t('إدارة النظام','Administration'),keys:['private','packages','staff','settings']},
+    {title:t('إدارة النظام','Administration'),keys:['private','packages','hotels','staff','settings']},
   ]:[];
   const descriptions:Partial<Record<AdminTab,string>>={
     manifest:t('كشف الرحلة وحالة صعود الركاب','Trip manifest and boarding status'),
     reports:t('المبيعات والإشغال وعدم الحضور','Sales, occupancy and no-shows'),
+    finance:t('الإيرادات والمصروفات وصافي الربح','Revenue, expenses and net profit'),
     driver:t('بيانات السائقين','Driver profiles'),
     bus:t('الحافلات وأرقام اللوحات','Buses and plate numbers'),
     station:t('نقاط المغادرة والوصول','Departure and arrival points'),
@@ -58,6 +59,7 @@ export function AdminMorePage({items,user,isAdmin,onSelect}:{items:AdminNavItem[
     staff:t('حسابات الدخول والصلاحيات','Sign-in accounts and permissions'),
     private:t('طلبات وأسعار وتعيين الحافلات الخاصة','Private requests, prices and assignments'),
     packages:t('الباقات والأسعار والتفاصيل والظهور','Packages, prices, details and visibility'),
+    hotels:t('الفنادق وأنواع الغرف وأسعارها','Hotels, room types and prices'),
     settings:t('الأسعار والتواصل وسياسة الإلغاء','Fares, contact and cancellation policy'),
   };
   const Arrow=en?ChevronRight:ChevronLeft;
