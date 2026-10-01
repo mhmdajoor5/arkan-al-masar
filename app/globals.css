@@ -583,3 +583,15 @@ html[data-arkan-splash=show] .startup-splash{display:flex;animation:arkan-splash
 @media(max-width:900px){.finance-grid{grid-template-columns:minmax(0,1fr)}.finance-filters>button{margin-inline-start:0;width:100%;justify-content:center}.finance-filters>label{flex:1;min-width:130px}}
 .ops-occupancy .ops-full{display:inline;color:var(--destructive);font-weight:600}
 .manifest-payment{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.manifest-payment .primary{min-height:34px;padding:4px 12px;font-size:13px}.manifest-payment .text-button{font-size:13px}
+.accounting-page{display:grid;gap:18px}
+.accounting-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.accounting-stats article{display:flex;align-items:center;gap:14px;padding:19px;border:1px solid var(--border);border-radius:18px;background:#fff}
+.accounting-stats article>span{width:48px;height:48px;border-radius:15px;display:grid;place-items:center;background:#edf5e8;color:var(--green)}
+.accounting-stats article>div{display:grid;gap:4px}.accounting-stats small{color:var(--muted-foreground)}.accounting-stats b{font-size:22px;color:var(--green)}.accounting-stats .negative b{color:var(--destructive)}
+.accounting-form{margin:18px 0;padding:18px;border:1px solid var(--border);border-radius:16px;background:#f8faf6;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.accounting-form label{display:grid;gap:7px;font-weight:600;font-size:14px}.accounting-form input,.accounting-form select,.accounting-form textarea,.accounting-filters input,.accounting-filters select{width:100%;min-height:46px;border:1px solid var(--input);border-radius:12px;background:#fff;padding:10px 12px;color:var(--ink);outline:none}
+.accounting-description{grid-column:1/-1}.accounting-description textarea{min-height:90px;resize:vertical}.accounting-form-actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:9px}.accounting-form-actions button{min-width:120px}
+.accounting-filters{display:grid;grid-template-columns:220px 1fr;gap:12px;margin:18px 0}.accounting-filters form{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px}.accounting-filters form>svg{margin-inline-end:-38px;z-index:1;color:var(--muted-foreground)}.accounting-filters form input{padding-inline-start:42px}
+.accounting-ledger .ops-table{overflow-x:auto}.accounting-ledger table{min-width:960px}.accounting-ledger td small{display:block;margin-top:4px;color:var(--muted-foreground);max-width:320px}.ledger-category{display:inline-flex;padding:5px 10px;border-radius:999px;background:#edf5e8;color:#315d4b;font-size:12px;font-weight:700;white-space:nowrap}.ledger-debit{color:var(--destructive);font-weight:700}.ledger-credit{color:#277653;font-weight:700}
+@media(max-width:900px){.accounting-stats{grid-template-columns:1fr}.accounting-form{grid-template-columns:1fr 1fr}}
+@media(max-width:640px){.accounting-form{grid-template-columns:1fr;padding:14px}.accounting-description,.accounting-form-actions{grid-column:auto}.accounting-filters{grid-template-columns:1fr}.accounting-stats article{padding:16px}}

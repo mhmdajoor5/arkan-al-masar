@@ -1,13 +1,13 @@
 'use client';
 
 import {useSyncExternalStore} from 'react';
-import {ArrowLeft,ArrowRight,ArrowUpRight,Bell,BusFront,ChevronLeft,ChevronRight,FileText,House,KeyRound,LayoutGrid,LogOut,ScanLine,ShieldCheck,Ticket,type LucideIcon} from 'lucide-react';
+import {ArrowLeft,ArrowRight,ArrowUpRight,Bell,BusFront,ChevronLeft,ChevronRight,FileText,House,KeyRound,LayoutGrid,LogOut,ScanLine,ShieldCheck,Ticket,WalletCards,type LucideIcon} from 'lucide-react';
 import {Sidebar} from '@/components/ui/sidebar';
 import {useLocale} from '@/lib/arkan-client';
 import {staffLogout} from './staff-access';
 import {PushEnable} from './trip-status';
 
-export type AdminTab='overview'|'trips'|'bookings'|'scan'|'manifest'|'station'|'bus'|'driver'|'schedule'|'reports'|'settings'|'staff'|'private'|'packages'|'hotels'|'finance'|'more';
+export type AdminTab='overview'|'trips'|'bookings'|'scan'|'manifest'|'station'|'bus'|'driver'|'schedule'|'reports'|'settings'|'staff'|'private'|'packages'|'hotels'|'finance'|'accounting'|'more';
 export type AdminNavItem=[AdminTab,string,LucideIcon];
 
 const desktopQuery='(min-width: 1024px)';
@@ -44,7 +44,7 @@ export function AdminMobileBack({onBack}:{onBack:()=>void}){
 export function AdminMorePage({items,user,isAdmin,onSelect}:{items:AdminNavItem[];user:{name:string;email:string};isAdmin:boolean;onSelect:(tab:AdminTab)=>void}){
   const {en,t}=useLocale();
   const groups:{title:string;keys:AdminTab[]}[]=isAdmin?[
-    {title:t('الركاب والتقارير','Passengers & reports'),keys:['manifest','reports','finance']},
+    {title:t('الركاب والتقارير','Passengers & reports'),keys:['manifest','reports','finance','accounting']},
     {title:t('الأسطول والمحطات','Fleet & stations'),keys:['driver','bus','station','schedule']},
     {title:t('إدارة النظام','Administration'),keys:['private','packages','hotels','staff','settings']},
   ]:[];
@@ -52,6 +52,7 @@ export function AdminMorePage({items,user,isAdmin,onSelect}:{items:AdminNavItem[
     manifest:t('كشف الرحلة وحالة صعود الركاب','Trip manifest and boarding status'),
     reports:t('المبيعات والإشغال وعدم الحضور','Sales, occupancy and no-shows'),
     finance:t('الإيرادات والمصروفات وصافي الربح','Revenue, expenses and net profit'),
+    accounting:t('الموردون والعملاء والسائقون والمشتريات والديون','Suppliers, customers, drivers, purchases and debts'),
     driver:t('بيانات السائقين','Driver profiles'),
     bus:t('الحافلات وأرقام اللوحات','Buses and plate numbers'),
     station:t('نقاط المغادرة والوصول','Departure and arrival points'),
