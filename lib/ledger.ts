@@ -1,0 +1,22 @@
+import {z} from 'zod';
+import {db,fail} from './arkan-server';
+import {requireStaff} from './operations-auth';
+
+const category=z.enum(['supplier','customer','driver','purchase','management','debt','rent']);
+const date=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(v=>!isNaN(Date.parse(v))&&new Date(v+'T00:00:00Z').toISOString().slice(0,10)===v);
+
+export async function ledgerState(categoryValue='',query=''){
+ await requireStaff(['admin']);const selected=categoryValue?category.parse(categoryValue):'',term=query.trim().slice(0,120);let sql='SELECT id,category,party,entry_date entryDate,statement,description,debit,credit,created,actor FROM ledger_entries WHERE 1=1';const args:unknown[]=[];
+ if(selected){sql+=' AND category=?';args.push(selected)}if(term){sql+=' AND (party LIKE ? OR statement LIKE ? OR description LIKE ?)';const value='%'+term+'%';args.push(value,value,value)}
+ const where=sql.slice(sql.indexOf(' WHERE'));
+ const [summary,rows]=await db().batch([
+  db().prepare('SELECT COUNT(*) count,COALESCE(SUM(debit),0) debit,COALESCE(SUM(credit),0) credit,COALESCE(SUM(credit-debit),0) balance FROM ledger_entries'+where).bind(...args),
+  db().prepare('SELECT id,category,party,entry_date entryDate,statement,description,debit,credit,created,actor,SUM(credit-debit) OVER (ORDER BY entry_date,created,id ROWS UNBOUNDED PRECEDING) running FROM ledger_entries'+where+' ORDER BY entry_date DESC,created DESC,id DESC LIMIT 500').bind(...args)
+ ]);
+ return {entries:rows.results,summary:summary.results[0]};
+}
+export async function ledgerAction(body:any){
+ const user=await requireStaff(['admin']);
+ if(body.op==='saveLedger'){const data=z.object({category,party:z.string().trim().min(1).max(140),entryDate:date,statement:z.string().trim().min(1).max(180),description:z.string().trim().max(1000),debit:z.number().int().min(0).max(100000000000),credit:z.number().int().min(0).max(100000000000)}).refine(value=>(value.debit>0)!==(value.credit>0),{message:'LEDGER_SIDE_REQUIRED'}).parse(body.data);await db().prepare('INSERT INTO ledger_entries(id,category,party,entry_date,statement,description,debit,credit,created,actor) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(crypto.randomUUID(),data.category,data.party,data.entryDate,data.statement,data.description,data.debit,data.credit,Date.now(),user.email).run();return{ok:true}}
+ if(body.op==='deleteLedger'){const id=z.string().uuid().parse(body.id);await db().prepare('DELETE FROM ledger_entries WHERE id=?').bind(id).run();return{ok:true}}fail('UNKNOWN_ACTION');
+}
