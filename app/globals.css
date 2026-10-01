@@ -595,3 +595,5 @@ html[data-arkan-splash=show] .startup-splash{display:flex;animation:arkan-splash
 .accounting-ledger .ops-table{overflow-x:auto}.accounting-ledger table{min-width:960px}.accounting-ledger td small{display:block;margin-top:4px;color:var(--muted-foreground);max-width:320px}.ledger-category{display:inline-flex;padding:5px 10px;border-radius:999px;background:#edf5e8;color:#315d4b;font-size:12px;font-weight:700;white-space:nowrap}.ledger-debit{color:var(--destructive);font-weight:700}.ledger-credit{color:#277653;font-weight:700}
 @media(max-width:900px){.accounting-stats{grid-template-columns:1fr}.accounting-form{grid-template-columns:1fr 1fr}}
 @media(max-width:640px){.accounting-form{grid-template-columns:1fr;padding:14px}.accounting-description,.accounting-form-actions{grid-column:auto}.accounting-filters{grid-template-columns:1fr}.accounting-stats article{padding:16px}}
+
+.ledger-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.accounting-ledger>.ledger-actions{margin:12px 0}.accounting-form>.accounting-description{grid-column:1/-1}
