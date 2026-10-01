@@ -5,8 +5,9 @@ import {requireStaff} from './operations-auth';
 const category=z.enum(['supplier','customer','driver','purchase','management','debt','rent']);
 const date=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(v=>!isNaN(Date.parse(v))&&new Date(v+'T00:00:00Z').toISOString().slice(0,10)===v);
 
-export async function ledgerState(categoryValue='',query='',exportAll=false){
+export async function ledgerState(categoryValue='',query='',exportAll=false,partyValue=''){
  await requireStaff(['admin']);const selected=categoryValue?category.parse(categoryValue):'',term=query.trim().slice(0,120);let sql='SELECT id,category,party,entry_date entryDate,statement,description,debit,credit,created,actor FROM ledger_entries WHERE 1=1';const args:unknown[]=[];
+ if(partyValue){sql+=' AND party=?';args.push(z.string().max(140).parse(partyValue))}
  if(selected){sql+=' AND category=?';args.push(selected)}if(term){sql+=' AND (party LIKE ? OR statement LIKE ? OR description LIKE ?)';const value='%'+term+'%';args.push(value,value,value)}
  const where=sql.slice(sql.indexOf(' WHERE'));
  const [summary,rows]=await db().batch([
@@ -17,7 +18,8 @@ export async function ledgerState(categoryValue='',query='',exportAll=false){
  const options=await db().prepare("SELECT data FROM entities WHERE kind='ledger_description' ORDER BY id").all();
  const partyRows=await db().prepare("SELECT category,party name FROM ledger_entries GROUP BY category,party UNION SELECT json_extract(data,'$.category') category,json_extract(data,'$.name') name FROM entities WHERE kind='ledger_party' UNION SELECT 'driver' category,json_extract(data,'$.name') name FROM entities WHERE kind='driver' ORDER BY category,name").all();
  const attachments=await db().prepare("SELECT id,json_extract(data,'$.entry') entry,json_extract(data,'$.name') name FROM entities WHERE kind='ledger_attachment'").all();
- return {parties:partyRows.results,entries:rows.results.map((row:any)=>({...row,attachments:attachments.results.filter((a:any)=>a.entry===row.id)})),summary:summary.results[0],descriptions:options.results.map((r:any)=>JSON.parse(r.data).name)};
+ const balances=await db().prepare('SELECT category,party name,COUNT(*) count,SUM(debit) debit,SUM(credit) credit,SUM(credit-debit) balance FROM ledger_entries GROUP BY category,party').all();
+ return {accounts:partyRows.results.map((p:any)=>({...p,count:0,debit:0,credit:0,balance:0,...balances.results.find((b:any)=>b.category===p.category&&b.name===p.name)})),parties:partyRows.results,entries:rows.results.map((row:any)=>({...row,attachments:attachments.results.filter((a:any)=>a.entry===row.id)})),summary:summary.results[0],descriptions:options.results.map((r:any)=>JSON.parse(r.data).name)};
 }
 export async function ledgerAction(body:any){
  const user=await requireStaff(['admin']);
