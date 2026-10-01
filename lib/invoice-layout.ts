@@ -4,7 +4,7 @@ import {attendance} from './ticket-details';
 // Let the browser shape Alexandria Arabic. jsPDF's Arabic shaper drops some
 // Alexandria glyphs; high-resolution text images preserve the exact web font.
 let assets:Promise<Uint8Array>|undefined;
-async function loadAssets(){
+export async function loadAssets(){
  if(!assets)assets=(async()=>{
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
   try{
@@ -17,7 +17,7 @@ async function loadAssets(){
  return assets;
 }
 const scale=8,pt=25.4/72;
-function painter(p:jsPDF){
+export function painter(p:jsPDF){
  const canvas=document.createElement('canvas');const ctx=canvas.getContext('2d');if(!ctx)throw Error('PDF_FONT_UNAVAILABLE');
  const font=(size:number,bold:boolean)=>`${bold?600:400} ${size*pt*scale}px ArkanInvoice`;
  const width=(s:string,size:number,bold=false)=>{ctx.font=font(size,bold);return ctx.measureText(s).width/scale};
