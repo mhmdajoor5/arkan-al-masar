@@ -6,6 +6,9 @@
 @font-face{font-family:'Alexandria';font-style:normal;font-weight:600;font-display:swap;src:url('/fonts/Alexandria-600.ttf') format('truetype')}
 @font-face{font-family:'Alexandria';font-style:normal;font-weight:700;font-display:swap;src:url('/fonts/Alexandria-700.ttf') format('truetype')}
 
+.account-view-tabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}.account-view-tabs button{font-size:13px;min-height:42px}.account-row-actions{display:flex;gap:6px;flex-shrink:0}.account-row-actions button{min-height:44px;font-size:13px;padding:8px 12px;white-space:nowrap}.account-row-actions .ops-danger,.ledger-account-dialog .ops-danger{color:#b42318;border-color:#efc4c0;background:#fff4f2}.ledger-account-dialog{max-width:520px}.ledger-account-form{display:flex;flex-direction:column;gap:16px;margin:0;padding:0;background:transparent;border:0}.ledger-account-form p{margin:0}.ledger-account-form .accounting-form-actions{display:flex;flex-wrap:wrap;gap:10px;justify-content:flex-end}
+@media(max-width:800px){.account-directory-row{flex-wrap:wrap;padding:10px}.account-directory-row .account-open{flex-basis:100%;width:100%;padding:6px 2px}.account-row-actions{width:100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.account-row-actions button{justify-content:center;padding:8px 5px}.account-row-actions button:only-child{grid-column:1/-1}}
+
 
 
 
