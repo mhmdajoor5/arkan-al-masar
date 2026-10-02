@@ -29,13 +29,17 @@ async function create(){for(const account of[from,to,third])await api.ledgerActi
 
 (async()=>{
  let transfer=await create();
+ assert.ok(rows().every(r=>r.description===`تحويل من ${from.name} إلى ${to.name}`));
+ // Older transfers have a generic stored description; the returned statement still names both accounts.
+ sql.exec("UPDATE ledger_entries SET description='تحويل'");
+ assert.ok((await api.ledgerState()).entries.every(r=>r.description===`تحويل من ${from.name} إلى ${to.name}`));
  const initialRows=rows(),attachment=crypto.randomUUID();
  sql.prepare("INSERT INTO entities VALUES(?,'ledger_attachment',?)").run(attachment,JSON.stringify({entry:transfer.fromEntryId,name:'receipt.jpg',image:'data:image/jpeg;base64,/9j/2Q=='}));
  const update=edit(transfer.id,0,{...original,to:third,amount:150000,entryDate:'2026-10-04',statement:'Corrected transfer'});
  await api.ledgerAction(update);await api.ledgerAction(update);
  assert.equal(rows().length,2);assert.equal(balance(from),-150000);assert.equal(balance(to),0);assert.equal(balance(third),150000);assert.equal(eventCount(),1);
  assert.equal(metadata(transfer.id).revision,1);
- for(const row of rows()){assert.equal(row.entry_date,'2026-10-04');assert.equal(row.statement,'Corrected transfer')}
+ for(const row of rows()){assert.equal(row.entry_date,'2026-10-04');assert.equal(row.statement,'Corrected transfer');assert.equal(row.description,`تحويل من ${from.name} إلى ${third.name}`)}
  assert.ok((await api.ledgerAttachment(attachment)).image);
  const state=await api.ledgerState();assert.equal(state.entries.length,2);assert.ok(state.entries.every(e=>e.transfer.revision===1&&e.attachments.length===1));
  await assert.rejects(api.ledgerAction(edit(transfer.id,0,original)),/LEDGER_TRANSFER_CHANGED/);
@@ -71,9 +75,28 @@ async function create(){for(const account of[from,to,third])await api.ledgerActi
  clear();transfer=await create();const sameCancel=cancel(transfer.id,0);
  await Promise.all([api.ledgerAction(sameCancel),api.ledgerAction(sameCancel)]);
  assert.equal(rows().length,4);assert.equal(eventCount(),1);assert.equal(balance(from),0);assert.equal(balance(to),0);
+
+ // Inclusive date ranges use the same predicate for rows, sums, running balance and exports.
+ clear();
+ for(const [entryDate,debit,credit] of [['2026-09-30',100,0],['2026-10-01',200,0],['2026-10-02',0,500],['2026-10-03',0,900]]){
+  await api.ledgerAction({op:'saveLedger',data:{category:from.category,party:from.name,entryDate,debit,credit,statement:'Date filter fixture',description:'كاش'}});
+ }
+ const period=await api.ledgerState(from.category,'fixture',false,from.name,'2026-10-01','2026-10-02');
+ assert.equal(period.entries.length,2);assert.equal(period.summary.debit,200);assert.equal(period.summary.credit,500);assert.equal(period.summary.balance,300);assert.equal(period.entries[0].running,300);assert.equal(period.entries[1].running,-200);
+ const exported=await api.ledgerState(from.category,'fixture',true,from.name,'2026-10-01','2026-10-02');
+ assert.deepEqual(exported.entries,period.entries);assert.deepEqual(exported.summary,period.summary);
+ assert.equal((await api.ledgerState('','',false,'','2026-10-02','2026-10-02')).entries.length,1);
+ assert.equal((await api.ledgerState('','',false,'','','2026-10-01')).summary.count,2);
+ assert.equal((await api.ledgerState('','',false,'','2026-10-02','')).summary.count,2);
+ assert.equal((await api.ledgerState('','',false,'','2027-01-01','')).summary.balance,0);
+ assert.equal((await api.ledgerState()).summary.count,4);
+ assert.equal((await api.ledgerState('','',false,'Other','2026-10-01','2026-10-02')).summary.count,0);
+ await assert.rejects(api.ledgerState('','',false,'','2026-10-03','2026-10-01'),/LEDGER_DATE_RANGE/);
+ await assert.rejects(api.ledgerState('','',true,'','2026-02-30',''));
+ await assert.rejects(api.ledgerState('','',false,'','invalid',''));
  authorized=false;
  await assert.rejects(api.ledgerAction(edit(transfer.id,1,original)),/FORBIDDEN/);
  await assert.rejects(api.ledgerAction(cancel(transfer.id,1)),/FORBIDDEN/);
  await assert.rejects(api.ledgerState(),/FORBIDDEN/);
- console.log('PASS: legacy transfers; paired edits and balances; receipt retention; cancellation reversals; audit records; stale updates; idempotent retries; concurrent edits/cancellation; transaction rollback; linked-entry locks; admin access.');
+ console.log('PASS: legacy transfers; paired edits and balances; receipt retention; cancellation reversals; audit records; stale updates; idempotent retries; concurrent edits/cancellation; transaction rollback; linked-entry locks; automatic descriptions; inclusive date filters and matching exports; admin access.');
 })().catch(error=>{console.error(error);process.exitCode=1});
