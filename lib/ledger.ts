@@ -1,6 +1,7 @@
 import {z} from 'zod';
 import {db,fail} from './arkan-server';
 import {requireStaff} from './operations-auth';
+import {accountSources,accountDirectory,accountAvailable,addLedgerAccount,changeLedgerAccount} from './ledger-accounts';
 
 const category=z.enum(['supplier','customer','driver','purchase','management','debt','rent']);
 const date=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(v=>!isNaN(Date.parse(v))&&new Date(v+'T00:00:00Z').toISOString().slice(0,10)===v);
@@ -9,7 +10,7 @@ const transferAccount=z.object({category,name:z.string().min(1).max(140).refine(
 const transferData=z.object({from:transferAccount,to:transferAccount,amount:z.number().int().positive().max(100000000000),entryDate:date,statement:z.string().trim().min(1).max(180)});
 const transferDescription=(data:z.infer<typeof transferData>)=>'تحويل من '+data.from.name+' إلى '+data.to.name;
 const transferLinked="EXISTS(SELECT 1 FROM entities t WHERE t.kind='ledger_transfer' AND ledger_entries.id IN (json_extract(t.data,'$.fromEntryId'),json_extract(t.data,'$.toEntryId'),json_extract(t.data,'$.reversalFromEntryId'),json_extract(t.data,'$.reversalToEntryId')))";
-const accountExists="EXISTS(SELECT 1 FROM ledger_entries WHERE category=? AND party=? UNION ALL SELECT 1 FROM entities WHERE ((kind='ledger_party' AND json_extract(data,'$.category')=?) OR (kind='driver' AND ?='driver')) AND json_extract(data,'$.name')=?)";
+const accountExists="EXISTS(SELECT 1 FROM ("+accountSources+") WHERE category=? AND name=?) AND "+accountAvailable;
 
 async function ensureLedgerEditable(id:string){
  if(await db().prepare('SELECT 1 FROM ledger_entries WHERE id=? AND '+transferLinked).bind(id).first())fail('LEDGER_TRANSFER_LOCKED',409);
@@ -20,7 +21,7 @@ async function createLedgerTransfer(body:any,actor:string){
  if(data.from.category===data.to.category&&data.from.name===data.to.name)fail('LEDGER_SAME_ACCOUNT');
  const key='ledger_transfer:'+id,nonce=crypto.randomUUID(),created=Date.now(),fromEntryId=crypto.randomUUID(),toEntryId=crypto.randomUUID();
  const request=JSON.stringify(data),metadata=JSON.stringify({id,request,nonce,fromEntryId,toEntryId,created,actor});
- const accountArgs=(value:z.infer<typeof transferAccount>)=>[value.category,value.name,value.category,value.category,value.name];
+ const accountArgs=(value:z.infer<typeof transferAccount>)=>[value.category,value.name,value.category,value.name];
  // The metadata nonce claims this request inside the same transaction as both legs.
  // A concurrent/retried request cannot insert a leg unless it won that claim.
  const results=await db().batch([
@@ -62,7 +63,7 @@ async function changeLedgerTransfer(body:any,actor:string){
  const event=JSON.stringify({request,transferId:id,action:cancelling?'cancel':'edit',before,after:data,reason:cancellation?.reason,entryDate:cancellation?.entryDate,created:changed,actor,result});
  const entryMatches='EXISTS(SELECT 1 FROM ledger_entries WHERE id=? AND category=? AND party=? AND entry_date=? AND statement=? AND debit=? AND credit=?)';
  const legArgs=(entryId:string,account:z.infer<typeof transferAccount>,debit:number,credit:number)=>[entryId,account.category,account.name,before.entryDate,before.statement,debit,credit];
- const accountArgs=(account:z.infer<typeof transferAccount>)=>[account.category,account.name,account.category,account.category,account.name];
+ const accountArgs=(account:z.infer<typeof transferAccount>)=>[account.category,account.name,account.category,account.name];
  const claim="EXISTS(SELECT 1 FROM entities WHERE id=? AND kind='ledger_transfer' AND json_extract(data,'$.lastMutation')=?)";
  // Compare-and-swap the complete metadata and verify both existing legs. D1 batch
  // commits the claim, both leg changes and audit record together, or rolls back all.
@@ -93,7 +94,7 @@ export async function ledgerState(categoryValue='',query='',exportAll=false,part
  if(from){sql+=' AND entry_date>=?';args.push(from)}
  if(to){sql+=' AND entry_date<=?';args.push(to)}
  if(partyValue){sql+=' AND party=?';args.push(z.string().max(140).parse(partyValue))}
- if(selected){sql+=' AND category=?';args.push(selected)}if(term){sql+=' AND (party LIKE ? OR statement LIKE ? OR description LIKE ?)';const value='%'+term+'%';args.push(value,value,value)}
+ if(selected){sql+=' AND category=?';args.push(selected)}if(term){sql+=" AND (party LIKE ? OR statement LIKE ? OR description LIKE ? OR EXISTS(SELECT 1 FROM entities p WHERE p.kind='ledger_account' AND json_extract(p.data,'$.category')=ledger_entries.category AND json_extract(p.data,'$.name')=ledger_entries.party AND json_extract(p.data,'$.displayName') LIKE ?))";const value='%'+term+'%';args.push(value,value,value,value)}
  const where=sql.slice(sql.indexOf(' WHERE'));
  const [summary,rows]=await db().batch([
   db().prepare('SELECT COUNT(*) count,COALESCE(SUM(debit),0) debit,COALESCE(SUM(credit),0) credit,COALESCE(SUM(credit-debit),0) balance FROM ledger_entries'+where).bind(...args),
@@ -101,27 +102,30 @@ export async function ledgerState(categoryValue='',query='',exportAll=false,part
  ]);
  if(exportAll&&Number((summary.results[0] as any)?.count)>10000)fail('LEDGER_EXPORT_LIMIT',400);
  const options=await db().prepare("SELECT data FROM entities WHERE kind='ledger_description' ORDER BY id").all();
- const partyRows=await db().prepare("SELECT category,party name FROM ledger_entries GROUP BY category,party UNION SELECT json_extract(data,'$.category') category,json_extract(data,'$.name') name FROM entities WHERE kind='ledger_party' UNION SELECT 'driver' category,json_extract(data,'$.name') name FROM entities WHERE kind='driver' ORDER BY category,name").all();
+ const partyRows=await db().prepare(accountDirectory+' ORDER BY category,displayName').all();
+ const labels=new Map(partyRows.results.map((p:any)=>[JSON.stringify([p.category,p.name]),p.displayName]));
+ const displayName=(a:{category:string;name:string})=>String(labels.get(JSON.stringify([a.category,a.name]))||a.name);
  const attachments=await db().prepare("SELECT id,json_extract(data,'$.entry') entry,json_extract(data,'$.name') name,COALESCE(json_extract(data,'$.type'),'image/jpeg') type FROM entities WHERE kind='ledger_attachment'").all();
  const balances=await db().prepare('SELECT category,party name,COUNT(*) count,SUM(debit) debit,SUM(credit) credit,SUM(credit-debit) balance FROM ledger_entries GROUP BY category,party').all();
  const transfers=await db().prepare("SELECT data FROM entities WHERE kind='ledger_transfer'").all<{data:string}>();
  const links=new Map<string,any>();
  for(const row of transfers.results){
   const value=JSON.parse(row.data),request=JSON.parse(value.request);
-  const transfer={id:value.id,revision:value.revision||0,status:value.status||'active',...request,cancelReason:value.cancelReason,cancelDate:value.cancelDate};
+  const transfer={id:value.id,revision:value.revision||0,status:value.status||'active',...request,from:{...request.from,displayName:displayName(request.from)},to:{...request.to,displayName:displayName(request.to)},cancelReason:value.cancelReason,cancelDate:value.cancelDate};
   for(const [entryId,peer,reversal] of [[value.fromEntryId,request.to,false],[value.toEntryId,request.from,false],[value.reversalFromEntryId,request.to,true],[value.reversalToEntryId,request.from,true]]){
-   if(entryId)links.set(entryId,{description:(reversal?'عكس ':'')+transferDescription(request),transferId:value.id,transferPeer:peer,transfer,transferReversal:reversal,attachmentEntries:[value.fromEntryId,value.toEntryId,value.reversalFromEntryId,value.reversalToEntryId].filter(Boolean)});
+   if(entryId)links.set(entryId,{description:(reversal?'عكس ':'')+'تحويل من '+displayName(request.from)+' إلى '+displayName(request.to),transferId:value.id,transferPeer:{...peer,displayName:displayName(peer)},transfer,transferReversal:reversal,attachmentEntries:[value.fromEntryId,value.toEntryId,value.reversalFromEntryId,value.reversalToEntryId].filter(Boolean)});
   }
  }
- return {accounts:partyRows.results.map((p:any)=>({...p,count:0,debit:0,credit:0,balance:0,...balances.results.find((b:any)=>b.category===p.category&&b.name===p.name)})),parties:partyRows.results,entries:rows.results.map((row:any)=>{const link=links.get(row.id);const {attachmentEntries,...transferFields}=link||{};return{...row,...transferFields,attachments:attachments.results.filter((a:any)=>a.entry===row.id||attachmentEntries?.includes(a.entry))}}),summary:summary.results[0],descriptions:options.results.map((r:any)=>JSON.parse(r.data).name)};
+ return {accounts:partyRows.results.map((p:any)=>({...p,count:0,debit:0,credit:0,balance:0,...balances.results.find((b:any)=>b.category===p.category&&b.name===p.name)})),parties:partyRows.results.filter((p:any)=>!p.archived),entries:rows.results.map((row:any)=>{const link=links.get(row.id);const {attachmentEntries,...transferFields}=link||{};return{...row,displayParty:displayName({category:row.category,name:row.party}),...transferFields,attachments:attachments.results.filter((a:any)=>a.entry===row.id||attachmentEntries?.includes(a.entry))}}),summary:summary.results[0],descriptions:options.results.map((r:any)=>JSON.parse(r.data).name)};
 }
 export async function ledgerAction(body:any){
  const user=await requireStaff(['admin']);
+ if(['renameLedgerAccount','archiveLedgerAccount','restoreLedgerAccount'].includes(body.op))return changeLedgerAccount(body,user.email);
  if(body.op==='createLedgerTransfer')return createLedgerTransfer(body,user.email);
  if(body.op==='updateLedgerTransfer'||body.op==='cancelLedgerTransfer')return changeLedgerTransfer(body,user.email);
- if(body.op==='addLedgerParty'){const section=category.parse(body.category),name=z.string().trim().min(1).max(140).parse(body.name).replace(/\s+/g,' ').normalize('NFC');const key='ledger_party:'+section+':'+name.toLocaleLowerCase();await db().prepare("INSERT INTO entities(id,kind,data) VALUES(?,'ledger_party',?) ON CONFLICT(id) DO NOTHING").bind(key,JSON.stringify({category:section,name})).run();const saved=await db().prepare("SELECT data FROM entities WHERE id=? AND kind='ledger_party'").bind(key).first<{data:string}>();return{ok:true,party:JSON.parse(saved!.data)}}
+ if(body.op==='addLedgerParty')return addLedgerAccount(body);
  if(body.op==='addLedgerDescription'){const name=z.string().trim().min(1).max(80).parse(body.name).replace(/\s+/g,' ').normalize('NFC');await db().prepare("INSERT INTO entities(id,kind,data) VALUES(?,'ledger_description',?) ON CONFLICT(id) DO NOTHING").bind('ledger_description:'+name.toLocaleLowerCase(),JSON.stringify({name})).run();return{ok:true,name}}
- if(body.op==='saveLedger'){const data=z.object({category,party:z.string().trim().min(1).max(140),entryDate:date,statement:z.string().trim().min(1).max(180),description:z.string().trim().max(1000),debit:z.number().int().min(0).max(100000000000),credit:z.number().int().min(0).max(100000000000)}).refine(value=>(value.debit>0)!==(value.credit>0),{message:'LEDGER_SIDE_REQUIRED'}).parse(body.data);if(body.id){const key=z.string().uuid().parse(body.id);await ensureLedgerEditable(key);const expected=z.object({category:z.string(),party:z.string(),entryDate:z.string(),statement:z.string(),description:z.string(),debit:z.number(),credit:z.number()}).parse(body.expected);const result=await db().prepare('UPDATE ledger_entries SET category=?,party=?,entry_date=?,statement=?,description=?,debit=?,credit=? WHERE id=? AND category=? AND party=? AND entry_date=? AND statement=? AND description=? AND debit=? AND credit=? AND NOT '+transferLinked).bind(data.category,data.party,data.entryDate,data.statement,data.description,data.debit,data.credit,key,expected.category,expected.party,expected.entryDate,expected.statement,expected.description,expected.debit,expected.credit).run();if(!result.meta.changes)fail('LEDGER_CHANGED',409);return{ok:true,id:key}}const newId=crypto.randomUUID();await db().prepare('INSERT INTO ledger_entries(id,category,party,entry_date,statement,description,debit,credit,created,actor) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(newId,data.category,data.party,data.entryDate,data.statement,data.description,data.debit,data.credit,Date.now(),user.email).run();return{ok:true,id:newId}}
+ if(body.op==='saveLedger'){const data=z.object({category,party:z.string().trim().min(1).max(140),entryDate:date,statement:z.string().trim().min(1).max(180),description:z.string().trim().max(1000),debit:z.number().int().min(0).max(100000000000),credit:z.number().int().min(0).max(100000000000)}).refine(value=>(value.debit>0)!==(value.credit>0),{message:'LEDGER_SIDE_REQUIRED'}).parse(body.data);if(body.id){const key=z.string().uuid().parse(body.id);await ensureLedgerEditable(key);const expected=z.object({category:z.string(),party:z.string(),entryDate:z.string(),statement:z.string(),description:z.string(),debit:z.number(),credit:z.number()}).parse(body.expected);const result=await db().prepare('UPDATE ledger_entries SET category=?,party=?,entry_date=?,statement=?,description=?,debit=?,credit=? WHERE id=? AND category=? AND party=? AND entry_date=? AND statement=? AND description=? AND debit=? AND credit=? AND '+accountAvailable+' AND NOT '+transferLinked).bind(data.category,data.party,data.entryDate,data.statement,data.description,data.debit,data.credit,key,expected.category,expected.party,expected.entryDate,expected.statement,expected.description,expected.debit,expected.credit,data.category,data.party).run();if(!result.meta.changes)fail('LEDGER_CHANGED',409);return{ok:true,id:key}}const newId=crypto.randomUUID();const inserted=await db().prepare('INSERT INTO ledger_entries(id,category,party,entry_date,statement,description,debit,credit,created,actor) SELECT ?,?,?,?,?,?,?,?,?,? WHERE '+accountAvailable).bind(newId,data.category,data.party,data.entryDate,data.statement,data.description,data.debit,data.credit,Date.now(),user.email,data.category,data.party).run();if(!inserted.meta.changes)fail('LEDGER_ACCOUNT_ARCHIVED',409);return{ok:true,id:newId}}
  if(body.op==='deleteLedger'){const id=z.string().uuid().parse(body.id);await ensureLedgerEditable(id);await db().batch([db().prepare("DELETE FROM entities WHERE kind='ledger_attachment' AND json_extract(data,'$.entry')=? AND NOT EXISTS(SELECT 1 FROM ledger_entries WHERE id=? AND "+transferLinked+')').bind(id,id),db().prepare('DELETE FROM ledger_entries WHERE id=? AND NOT '+transferLinked).bind(id)]);return{ok:true}}fail('UNKNOWN_ACTION');
 }
 
