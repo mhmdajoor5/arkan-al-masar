@@ -12,10 +12,13 @@ const db={
  async batch(statements){sql.exec('BEGIN');try{const results=statements.map((statement,index)=>{if(index===failStatement){failStatement=-1;throw new Error('SIMULATED_DATABASE_FAILURE')}return statement.execute()});sql.exec('COMMIT');return results}catch(error){sql.exec('ROLLBACK');throw error}}
 };
 const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status})};
-const compiled=ts.transpileModule(fs.readFileSync(path.join(root,'lib/ledger.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-const moduleObject={exports:{}};
-vm.runInNewContext(compiled,{exports:moduleObject.exports,module:moduleObject,require:id=>id==='./arkan-server'?{db:()=>db,fail}:id==='./operations-auth'?{requireStaff:async roles=>{assert.deepEqual(Array.from(roles),['admin']);if(!authorized)fail('FORBIDDEN',403);return{email:'admin@example.invalid'}}}:projectRequire(id),crypto:globalThis.crypto,URL,Uint8Array,btoa,Date});
-const api=moduleObject.exports;
+function loadLocal(file){
+ const compiled=ts.transpileModule(fs.readFileSync(path.join(root,file),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+ const target={exports:{}};
+ vm.runInNewContext(compiled,{exports:target.exports,module:target,require:id=>id==='./arkan-server'?{db:()=>db,fail}:id==='./operations-auth'?{requireStaff:async roles=>{assert.deepEqual(Array.from(roles),['admin']);if(!authorized)fail('FORBIDDEN',403);return{email:'admin@example.invalid'}}}:id==='./ledger-accounts'?loadLocal('lib/ledger-accounts.ts'):projectRequire(id),crypto:globalThis.crypto,URL,Uint8Array,btoa,Date});
+ return target.exports;
+}
+const api=loadLocal('lib/ledger.ts');
 const from={category:'customer',name:'Test A'},to={category:'driver',name:'Test B'},third={category:'supplier',name:'Test C'};
 const original={from,to,amount:100000,entryDate:'2026-10-03',statement:'Test transfer'};
 const rows=()=>sql.prepare('SELECT * FROM ledger_entries ORDER BY id').all();
@@ -94,9 +97,59 @@ async function create(){for(const account of[from,to,third])await api.ledgerActi
  await assert.rejects(api.ledgerState('','',false,'','2026-10-03','2026-10-01'),/LEDGER_DATE_RANGE/);
  await assert.rejects(api.ledgerState('','',true,'','2026-02-30',''));
  await assert.rejects(api.ledgerState('','',false,'','invalid',''));
+
+ // Account labels and reversible deletion must not alter accounting history or driver records.
+ clear();transfer=await create();
+ const driverId=crypto.randomUUID(),driver={id:driverId,name:to.name,mobile:'test-only'};
+ sql.prepare("INSERT INTO entities VALUES(?,'driver',?)").run(driverId,JSON.stringify(driver));
+ const ledgerBefore=rows(),transferBefore=metadata(transfer.id);
+ const accountChange=(op,target,revision,name)=>({op,account:target,expectedRevision:revision,requestId:crypto.randomUUID(),name});
+ const rename=accountChange('renameLedgerAccount',from,0,'الاسم المعدل');
+ await api.ledgerAction(rename);await api.ledgerAction(rename);
+ let accountsState=await api.ledgerState();
+ assert.equal(accountsState.accounts.find(a=>a.name===from.name).displayName,'الاسم المعدل');
+ assert.equal(accountsState.entries.find(e=>e.party===from.name).displayParty,'الاسم المعدل');
+ assert.ok(accountsState.entries.every(e=>e.description.includes('الاسم المعدل')));
+ assert.equal((await api.ledgerState('','الاسم المعدل')).entries.length,1);
+ assert.equal((await api.ledgerState('','',true)).entries.find(e=>e.party===from.name).displayParty,'الاسم المعدل');
+ assert.equal((await api.ledgerAction({op:'addLedgerParty',category:from.category,name:'الاسم المعدل'})).party.name,from.name);
+ await api.ledgerAction({op:'addLedgerParty',category:from.category,name:'Existing label'});
+ await assert.rejects(api.ledgerAction(accountChange('renameLedgerAccount',from,1,'Existing label')),/LEDGER_ACCOUNT_NAME_EXISTS/);
+ await assert.rejects(api.ledgerAction(accountChange('renameLedgerAccount',from,0,'Stale')),/LEDGER_ACCOUNT_CHANGED/);
+ await assert.rejects(api.ledgerAction(accountChange('renameLedgerAccount',{...from,name:'Missing'},0,'New')),/LEDGER_ACCOUNT_NOT_FOUND/);
+ const archive=accountChange('archiveLedgerAccount',from,1);
+ await Promise.all([api.ledgerAction(archive),api.ledgerAction(archive)]);
+ accountsState=await api.ledgerState();
+ assert.equal(accountsState.accounts.find(a=>a.name===from.name).archived,1);
+ assert.ok(!accountsState.parties.some(a=>a.name===from.name));
+ assert.equal(accountsState.accounts.find(a=>a.name===from.name).balance,-original.amount);
+ await assert.rejects(api.ledgerAction({op:'createLedgerTransfer',id:crypto.randomUUID(),data:original}),/LEDGER_ACCOUNT_NOT_FOUND/);
+ await assert.rejects(api.ledgerAction({op:'saveLedger',data:{category:from.category,party:from.name,entryDate:'2026-10-03',debit:1,credit:0,statement:'Blocked',description:'كاش'}}),/LEDGER_ACCOUNT_ARCHIVED/);
+ await assert.rejects(api.ledgerAction({op:'addLedgerParty',category:from.category,name:from.name}),/LEDGER_ACCOUNT_ARCHIVED/);
+ assert.deepEqual(rows(),ledgerBefore);assert.deepEqual(metadata(transfer.id),transferBefore);
+ await api.ledgerAction(accountChange('restoreLedgerAccount',from,2));
+ assert.ok((await api.ledgerState()).parties.some(a=>a.name===from.name));
+ await api.ledgerAction(edit(transfer.id,0,{...original,amount:321}));
+ assert.equal(balance(from),-321);assert.equal(balance(to),321);
+ await api.ledgerAction(accountChange('renameLedgerAccount',to,0,'اسم حساب السائق'));
+ assert.deepEqual(JSON.parse(sql.prepare('SELECT data FROM entities WHERE id=?').get(driverId).data),driver);
+ const beforeRollback=JSON.stringify((await api.ledgerState()).accounts);failStatement=1;
+ await assert.rejects(api.ledgerAction(accountChange('archiveLedgerAccount',to,1)),/SIMULATED_DATABASE_FAILURE/);
+ assert.equal(JSON.stringify((await api.ledgerState()).accounts),beforeRollback);
+ const competing=await Promise.allSettled([api.ledgerAction(accountChange('renameLedgerAccount',to,1,'Name A')),api.ledgerAction(accountChange('archiveLedgerAccount',to,1))]);
+ assert.equal(competing.filter(r=>r.status==='fulfilled').length,1);
+ // Cancellation remains available for transfers involving an archived account.
+ const currentTo=(await api.ledgerState()).accounts.find(a=>a.name===to.name);
+ if(!currentTo.archived)await api.ledgerAction(accountChange('archiveLedgerAccount',to,currentTo.revision));
+ await api.ledgerAction(cancel(transfer.id,1));
+ assert.equal(balance(from),0);assert.equal(balance(to),0);
+ const accountAudit=sql.prepare("SELECT COUNT(*) n FROM entities WHERE kind='ledger_account_change'").get().n;
+ assert.equal(accountAudit,currentTo.archived?5:6);
  authorized=false;
+ await assert.rejects(api.ledgerAction(accountChange('renameLedgerAccount',from,3,'Unauthorized')),/FORBIDDEN/);
+
  await assert.rejects(api.ledgerAction(edit(transfer.id,1,original)),/FORBIDDEN/);
  await assert.rejects(api.ledgerAction(cancel(transfer.id,1)),/FORBIDDEN/);
  await assert.rejects(api.ledgerState(),/FORBIDDEN/);
- console.log('PASS: legacy transfers; paired edits and balances; receipt retention; cancellation reversals; audit records; stale updates; idempotent retries; concurrent edits/cancellation; transaction rollback; linked-entry locks; automatic descriptions; inclusive date filters and matching exports; admin access.');
+ console.log('PASS: legacy transfers; paired edits and balances; receipt retention; cancellation reversals; audit records; stale updates; idempotent retries; concurrent edits/cancellation; transaction rollback; linked-entry locks; automatic descriptions; inclusive date filters and matching exports; account rename/delete/restore; unchanged driver records; archived account protection; admin access.');
 })().catch(error=>{console.error(error);process.exitCode=1});
