@@ -1,0 +1,46 @@
+// Exercise production booking SQL against isolated SQLite, never live customer data.
+const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),assert=require('node:assert/strict');
+const {DatabaseSync}=require('node:sqlite'),{createRequire}=require('node:module');
+const root=path.resolve(__dirname,'..'),projectRequire=createRequire(path.join(root,'package.json')),ts=projectRequire('typescript');
+const sql=new DatabaseSync(':memory:');sql.exec('PRAGMA foreign_keys=ON');
+for(const file of ['0000_yielding_silver_centurion.sql','0001_rainy_santa_claus.sql','0002_sour_scarecrow.sql','0003_trip_seats.sql'])sql.exec(fs.readFileSync(path.join(root,'drizzle',file),'utf8'));
+let clock=Date.parse('2026-10-03T00:00:00+03:00'),authorized=true,failAt=-1,packageSnapshot=null;
+class Clock extends Date{static now(){return clock}}
+const database={prepare(text){let args=[];return{bind(...values){args=values;return this},execute(){const s=sql.prepare(text);return s.columns().length?{results:s.all(...args),meta:{changes:0}}:{results:[],meta:s.run(...args)}},async first(){return this.execute().results[0]||null},async all(){return this.execute()},async run(){return this.execute()}}},async batch(commands){sql.exec('BEGIN');try{const result=commands.map((c,i)=>{if(i===failAt){failAt=-1;throw Error('ROLLBACK_FIXTURE')}return c.execute()});sql.exec('COMMIT');return result}catch(e){sql.exec('ROLLBACK');throw e}}};
+const fail=(message,status=400)=>{throw Object.assign(Error(message),{status})},cache={};
+const staff=async()=>{if(!authorized)fail('FORBIDDEN',403);return{email:'test-admin@example.invalid',role:'admin',driverId:''}};
+function load(file){if(cache[file])return cache[file];const target={exports:{}};cache[file]=target.exports;const code=ts.transpileModule(fs.readFileSync(path.join(root,file),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;vm.runInNewContext(code,{exports:target.exports,module:target,require:name=>name==='cloudflare:workers'?{env:{DB:database}}:name==='./operations-auth'?{requireStaff:staff,staffUser:staff}:name==='./trip-operations'?{issueBookingAccess:async()=> 'test-tracking'}:name==='./package-reservations'?{packageSelection:async()=>null,heldPackage:async()=>packageSnapshot}:['./finance','./checkin-trial','./hotels'].includes(name)?{}:name.startsWith('./')?load('lib/'+name.slice(2)+'.ts'):projectRequire(name),Date:Clock,crypto:globalThis.crypto,TextEncoder,URL,Request});return target.exports}
+const api=load('lib/arkan-server.ts'),sponsor=load('lib/sponsored-seats.ts');
+for(const [key,value] of Object.entries({one:15,round:30,paymentMode:'both'}))sql.prepare('INSERT INTO settings VALUES(?,?)').run(key,JSON.stringify(value));
+const req=()=>new Request('https://test.invalid/api/arkan',{headers:{'cf-connecting-ip':crypto.randomUUID()}});
+let tripIndex=0;
+function trip(reverse=false){const id='test-trip-'+(++tripIndex);sql.prepare('INSERT INTO trips VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,'2026-10-04',reverse?'12:00':'08:00',clock+86400000+(reverse?14400000:0),reverse?'makkah':'jeddah',reverse?'jeddah':'makkah','','test-driver','active',49);return id}
+const allocation=async(trip,seats,overrides={})=>({trip,seats,expectedRevision:(await sponsor.sponsoredTrip(trip)).revision,requestId:crypto.randomUUID(),funded:true,...overrides});
+const fund=async(trip,seats)=>sponsor.saveSponsoredAllocation(await allocation(trip,seats));
+const hold=async(legs)=>api.makeHold({legs},req());
+const body=(h,n=1,method='sponsored')=>({token:h.token,passengers:Array.from({length:n},(_,i)=>({name:'Test Passenger '+i,title:'mr',identityType:'national_id',nationalId:'000000000'+i,nationality:'Test'})),mobile:'966500000000',email:'test@example.invalid',accept:true,paymentMethod:method});
+const confirm=(h,n=1,method='sponsored')=>api.confirm(body(h,n,method),req());
+const count=kind=>sql.prepare('SELECT count(*) n FROM entities WHERE kind=?').get(kind).n;
+(async()=>{
+ const a=trip();authorized=false;await assert.rejects(sponsor.saveSponsoredAllocation(await allocation(a,1)),/FORBIDDEN/);await assert.rejects(sponsor.sponsoredAdminState(a),/FORBIDDEN/);authorized=true;
+ await assert.rejects(sponsor.saveSponsoredAllocation(await allocation(a,50)),/SPONSORED_CHANGED/);await assert.rejects(sponsor.saveSponsoredAllocation(await allocation(a,-1)));await assert.rejects(sponsor.saveSponsoredAllocation(await allocation(a,1,{funded:false})));
+ const zero=await hold([{trip:a,seats:[1]}]);assert.equal(zero.sponsored.available,0);await assert.rejects(confirm(zero),/SPONSORED_UNAVAILABLE/);const cash=await confirm(zero,1,'cash');assert.equal(cash.status,'pending');assert.equal(cash.amount,1500);
+ const config=await allocation(a,1);await sponsor.saveSponsoredAllocation(config);await sponsor.saveSponsoredAllocation(config);assert.equal(count('sponsored_change'),1);
+ const h=await hold([{trip:a,seats:[2]}]);assert.equal(h.sponsored.available,1);const free=await confirm(h);assert.equal(free.status,'paid');assert.equal(free.amount,0);assert.equal(free.paymentMethod,'sponsored');assert.equal(free.tickets[0].maskedId,'****0000');assert.equal((await confirm(h)).code,free.code);assert.equal(count('sponsored_booking'),1);await assert.rejects(confirm(h,1,'cash'),/CONFLICT/);
+ assert.equal((await sponsor.sponsoredTrip(a)).available,0);await assert.rejects(fund(a,0),/SPONSORED_CHANGED/);await assert.rejects(api.adminAction({op:'setPaymentStatus',code:free.code,expectedStatus:'paid',status:'pending'}),/PAYMENT_LOCKED/);
+ await api.adminAction({op:'cancelBooking',code:free.code});assert.equal((await sponsor.sponsoredTrip(a)).available,1);assert.equal(sql.prepare('SELECT count(*) n FROM holds WHERE token=?').get(h.token).n,0);
+ // Two customers compete for the final funded seat, on different physical seats.
+ const race=trip();await fund(race,1);const [r1,r2]=await Promise.all([hold([{trip:race,seats:[1]}]),hold([{trip:race,seats:[2]}])]);const results=await Promise.allSettled([confirm(r1),confirm(r2)]);assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.match(results.find(r=>r.status==='rejected').reason.message,/SPONSORED_UNAVAILABLE/);assert.equal((await sponsor.sponsoredTrip(race)).used,1);
+ const loser=results[0].status==='rejected'?r1:r2;assert.equal(sql.prepare('SELECT status FROM holds WHERE token=?').get(loser.token).status,'held');
+ // A failure after sponsorship claim must roll back all booking state.
+ const rollback=trip();await fund(rollback,1);const rh=await hold([{trip:rollback,seats:[1]}]),claims=count('sponsored_booking');failAt=2;await assert.rejects(confirm(rh),/SPONSORED_UNAVAILABLE/);assert.equal(count('sponsored_booking'),claims);assert.equal((await sponsor.sponsoredTrip(rollback)).used,0);assert.equal(sql.prepare('SELECT count(*) n FROM bookings WHERE hold_token=?').get(rh.token).n,0);await confirm(rh);
+ // Both legs and every passenger must fit, and cancellation releases both quotas.
+ const out=trip(),back=trip(true);await fund(out,2);await fund(back,1);const round=await hold([{trip:out,seats:[1,2]},{trip:back,seats:[3,4]}]);assert.equal(round.sponsored.available,1);await assert.rejects(confirm(round,2),/SPONSORED_UNAVAILABLE/);assert.equal((await sponsor.sponsoredTrip(out)).used,0);await fund(back,2);const rb=await confirm(round,2);assert.equal(rb.tickets.length,4);assert.equal(rb.amount,0);assert.equal((await sponsor.sponsoredTrip(back)).used,2);await api.adminAction({op:'cancelBooking',code:rb.code});assert.equal((await sponsor.sponsoredTrip(out)).available,2);assert.equal((await sponsor.sponsoredTrip(back)).available,2);
+ const cashRound=await confirm(await hold([{trip:out,seats:[1]},{trip:back,seats:[1]}]),1,'cash');assert.equal(cashRound.amount,3000);await api.adminAction({op:'setPaymentStatus',code:cashRound.code,expectedStatus:'pending',status:'paid'});await assert.rejects(api.adminAction({op:'cancelBooking',code:cashRound.code}),/REFUND_NOT_CONFIGURED/);
+ // Expiry, package tampering, boarded cancellation, and concurrent admin edits.
+ const exp=await hold([{trip:out,seats:[5]}]);clock+=600001;await assert.rejects(confirm(exp),/HOLD_EXPIRED/);
+ const pkg=await hold([{trip:out,seats:[6]}]);packageSnapshot={amount:9000};await assert.rejects(confirm(pkg),/SPONSORED_UNAVAILABLE/);packageSnapshot=null;
+ const boarded=await confirm(pkg);const scan={op:'scan',token:boarded.tickets[0].id,trip:out};assert.equal((await api.adminAction({...scan,trip:back})).status,'WRONG_TRIP');assert.equal((await api.adminAction(scan)).status,'VALID');assert.equal((await api.adminAction(scan)).status,'ALREADY_USED');await assert.rejects(api.adminAction({op:'cancelBooking',code:boarded.code}),/PAYMENT_LOCKED/);
+ const edit=trip(),e1=await allocation(edit,3),e2=await allocation(edit,4);const edits=await Promise.allSettled([sponsor.saveSponsoredAllocation(e1),sponsor.saveSponsoredAllocation(e2)]);assert.equal(edits.filter(r=>r.status==='fulfilled').length,1);
+ console.log('PASS sponsored seats: authorization, funding validation, capacity, atomic last-seat race, rollback, retries, round trips, cancellation, expiry, cash regression and concurrent edits.');
+})().catch(e=>{console.error(e);process.exitCode=1});
