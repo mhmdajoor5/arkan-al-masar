@@ -4,6 +4,7 @@ import {postMonthlyLedger} from './lib/monthly-ledger-core';
 export default {
  fetch:handler.fetch,
  async scheduled(_event:ScheduledController,env:{DB:D1Database}){
-  await postMonthlyLedger(env.DB);
+  try{await postMonthlyLedger(env.DB)}
+  catch(error){console.error('Monthly ledger scheduler failed',error);throw error}
  }
 };
