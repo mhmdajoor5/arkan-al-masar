@@ -34,7 +34,8 @@ try {
   catch { throw new Error('Run pnpm build before deployment.'); }
   const builtBinding = validateConfig(built);
   if (builtBinding.database_id !== sourceBinding.database_id || built.name !== source.name
-      || built.vars.VAPID_SUBJECT !== source.vars.VAPID_SUBJECT) {
+      || built.vars.VAPID_SUBJECT !== source.vars.VAPID_SUBJECT
+      || JSON.stringify(built.triggers?.crons) !== JSON.stringify(source.triggers?.crons)) {
     throw new Error('Built configuration is stale. Run pnpm build again.');
   }
   if (args[0] === '--check-config-only') {
