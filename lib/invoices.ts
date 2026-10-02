@@ -12,6 +12,7 @@ export async function bookingInvoice(body:any,req:Request){
  const row=isPrivate?await db().prepare("SELECT id,data FROM entities WHERE kind='private_booking' AND json_extract(data,'$.code')=?").bind(b.code).first<any>():await db().prepare('SELECT code,mobile,email,amount,status,created FROM bookings WHERE code=?').bind(b.code).first<any>();
  const source=isPrivate?(row?JSON.parse(row.data):null):row;
  if(!source||(!b.asAdmin&&(!b.mobile||mobile(b.mobile)!==source.mobile)))fail('BOOKING_NOT_FOUND',404);
+ if(!isPrivate&&await db().prepare("SELECT 1 FROM entities WHERE id=? AND kind='booking_metadata' AND json_extract(data,'$.paymentMethod')='sponsored'").bind('booking:'+b.code).first())fail('INVOICE_NOT_READY',409);
  const key='invoice:'+b.code;
  const existing=await db().prepare("SELECT data FROM entities WHERE id=? AND kind='invoice'").bind(key).first<any>();
  const state={bookingStatus:source.status,paymentStatus:isPrivate?(source.paymentStatus||'unpaid'):(source.status==='paid'?'paid':'unpaid'),checkedAt:now()};
