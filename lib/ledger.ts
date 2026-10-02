@@ -7,6 +7,7 @@ const date=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(v=>!isNaN(Date.parse(v
 
 const transferAccount=z.object({category,name:z.string().min(1).max(140).refine(v=>v.trim().length>0)});
 const transferData=z.object({from:transferAccount,to:transferAccount,amount:z.number().int().positive().max(100000000000),entryDate:date,statement:z.string().trim().min(1).max(180)});
+const transferDescription=(data:z.infer<typeof transferData>)=>'تحويل من '+data.from.name+' إلى '+data.to.name;
 const transferLinked="EXISTS(SELECT 1 FROM entities t WHERE t.kind='ledger_transfer' AND ledger_entries.id IN (json_extract(t.data,'$.fromEntryId'),json_extract(t.data,'$.toEntryId'),json_extract(t.data,'$.reversalFromEntryId'),json_extract(t.data,'$.reversalToEntryId')))";
 const accountExists="EXISTS(SELECT 1 FROM ledger_entries WHERE category=? AND party=? UNION ALL SELECT 1 FROM entities WHERE ((kind='ledger_party' AND json_extract(data,'$.category')=?) OR (kind='driver' AND ?='driver')) AND json_extract(data,'$.name')=?)";
 
@@ -24,8 +25,8 @@ async function createLedgerTransfer(body:any,actor:string){
  // A concurrent/retried request cannot insert a leg unless it won that claim.
  const results=await db().batch([
   db().prepare("INSERT INTO entities(id,kind,data) SELECT ?,'ledger_transfer',? WHERE "+accountExists+' AND '+accountExists+' ON CONFLICT(id) DO NOTHING').bind(key,metadata,...accountArgs(data.from),...accountArgs(data.to)),
-  db().prepare("INSERT INTO ledger_entries(id,category,party,entry_date,statement,description,debit,credit,created,actor) SELECT ?,?,?,?,?,?,?,?,?,? FROM entities WHERE id=? AND kind='ledger_transfer' AND json_extract(data,'$.nonce')=?").bind(fromEntryId,data.from.category,data.from.name,data.entryDate,data.statement,'تحويل',data.amount,0,created,actor,key,nonce),
-  db().prepare("INSERT INTO ledger_entries(id,category,party,entry_date,statement,description,debit,credit,created,actor) SELECT ?,?,?,?,?,?,?,?,?,? FROM entities WHERE id=? AND kind='ledger_transfer' AND json_extract(data,'$.nonce')=?").bind(toEntryId,data.to.category,data.to.name,data.entryDate,data.statement,'تحويل',0,data.amount,created,actor,key,nonce),
+  db().prepare("INSERT INTO ledger_entries(id,category,party,entry_date,statement,description,debit,credit,created,actor) SELECT ?,?,?,?,?,?,?,?,?,? FROM entities WHERE id=? AND kind='ledger_transfer' AND json_extract(data,'$.nonce')=?").bind(fromEntryId,data.from.category,data.from.name,data.entryDate,data.statement,transferDescription(data),data.amount,0,created,actor,key,nonce),
+  db().prepare("INSERT INTO ledger_entries(id,category,party,entry_date,statement,description,debit,credit,created,actor) SELECT ?,?,?,?,?,?,?,?,?,? FROM entities WHERE id=? AND kind='ledger_transfer' AND json_extract(data,'$.nonce')=?").bind(toEntryId,data.to.category,data.to.name,data.entryDate,data.statement,transferDescription(data),0,data.amount,created,actor,key,nonce),
   db().prepare("SELECT data FROM entities WHERE id=? AND kind='ledger_transfer'").bind(key)
  ]);
  const row=results[3].results[0] as {data:string}|undefined;
@@ -69,11 +70,11 @@ async function changeLedgerTransfer(body:any,actor:string){
   ...legArgs(saved.fromEntryId,before.from,before.amount,0),...legArgs(saved.toEntryId,before.to,0,before.amount),...(data?[...accountArgs(data.from),...accountArgs(data.to)]:[]),eventKey)];
  if(data){
   for(const [entryId,account,debit,credit] of [[saved.fromEntryId,data.from,data.amount,0],[saved.toEntryId,data.to,0,data.amount]] as const){
-   commands.push(db().prepare('UPDATE ledger_entries SET category=?,party=?,entry_date=?,statement=?,debit=?,credit=? WHERE id=? AND '+claim).bind(account.category,account.name,data.entryDate,data.statement,debit,credit,entryId,key,nonce));
+   commands.push(db().prepare('UPDATE ledger_entries SET category=?,party=?,entry_date=?,statement=?,description=?,debit=?,credit=? WHERE id=? AND '+claim).bind(account.category,account.name,data.entryDate,data.statement,transferDescription(data),debit,credit,entryId,key,nonce));
   }
  }else{
   for(const [entryId,account,debit,credit] of [[reversalFromEntryId!,before.from,0,before.amount],[reversalToEntryId!,before.to,before.amount,0]] as const){
-   commands.push(db().prepare('INSERT INTO ledger_entries(id,category,party,entry_date,statement,description,debit,credit,created,actor) SELECT ?,?,?,?,?,?,?,?,?,? WHERE '+claim).bind(entryId,account.category,account.name,cancellation!.entryDate,'إلغاء تحويل: '+cancellation!.reason,'عكس تحويل',debit,credit,changed,actor,key,nonce));
+   commands.push(db().prepare('INSERT INTO ledger_entries(id,category,party,entry_date,statement,description,debit,credit,created,actor) SELECT ?,?,?,?,?,?,?,?,?,? WHERE '+claim).bind(entryId,account.category,account.name,cancellation!.entryDate,'إلغاء تحويل: '+cancellation!.reason,'عكس '+transferDescription(before),debit,credit,changed,actor,key,nonce));
   }
  }
  commands.push(db().prepare("INSERT INTO entities(id,kind,data) SELECT ?,'ledger_transfer_change',? WHERE "+claim).bind(eventKey,event,key,nonce));
@@ -85,8 +86,12 @@ async function changeLedgerTransfer(body:any,actor:string){
  return recorded.result;
 }
 
-export async function ledgerState(categoryValue='',query='',exportAll=false,partyValue=''){
+export async function ledgerState(categoryValue='',query='',exportAll=false,partyValue='',fromValue='',toValue=''){
  await requireStaff(['admin']);const selected=categoryValue?category.parse(categoryValue):'',term=query.trim().slice(0,120);let sql='SELECT id,category,party,entry_date entryDate,statement,description,debit,credit,created,actor FROM ledger_entries WHERE 1=1';const args:unknown[]=[];
+ const from=fromValue?date.parse(fromValue):'',to=toValue?date.parse(toValue):'';
+ if(from&&to&&from>to)fail('LEDGER_DATE_RANGE');
+ if(from){sql+=' AND entry_date>=?';args.push(from)}
+ if(to){sql+=' AND entry_date<=?';args.push(to)}
  if(partyValue){sql+=' AND party=?';args.push(z.string().max(140).parse(partyValue))}
  if(selected){sql+=' AND category=?';args.push(selected)}if(term){sql+=' AND (party LIKE ? OR statement LIKE ? OR description LIKE ?)';const value='%'+term+'%';args.push(value,value,value)}
  const where=sql.slice(sql.indexOf(' WHERE'));
@@ -105,7 +110,7 @@ export async function ledgerState(categoryValue='',query='',exportAll=false,part
   const value=JSON.parse(row.data),request=JSON.parse(value.request);
   const transfer={id:value.id,revision:value.revision||0,status:value.status||'active',...request,cancelReason:value.cancelReason,cancelDate:value.cancelDate};
   for(const [entryId,peer,reversal] of [[value.fromEntryId,request.to,false],[value.toEntryId,request.from,false],[value.reversalFromEntryId,request.to,true],[value.reversalToEntryId,request.from,true]]){
-   if(entryId)links.set(entryId,{transferId:value.id,transferPeer:peer,transfer,transferReversal:reversal,attachmentEntries:[value.fromEntryId,value.toEntryId,value.reversalFromEntryId,value.reversalToEntryId].filter(Boolean)});
+   if(entryId)links.set(entryId,{description:(reversal?'عكس ':'')+transferDescription(request),transferId:value.id,transferPeer:peer,transfer,transferReversal:reversal,attachmentEntries:[value.fromEntryId,value.toEntryId,value.reversalFromEntryId,value.reversalToEntryId].filter(Boolean)});
   }
  }
  return {accounts:partyRows.results.map((p:any)=>({...p,count:0,debit:0,credit:0,balance:0,...balances.results.find((b:any)=>b.category===p.category&&b.name===p.name)})),parties:partyRows.results,entries:rows.results.map((row:any)=>{const link=links.get(row.id);const {attachmentEntries,...transferFields}=link||{};return{...row,...transferFields,attachments:attachments.results.filter((a:any)=>a.entry===row.id||attachmentEntries?.includes(a.entry))}}),summary:summary.results[0],descriptions:options.results.map((r:any)=>JSON.parse(r.data).name)};
