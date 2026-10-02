@@ -1,9 +1,9 @@
 import {companyProfile} from './company-profile';
-export type LedgerRow={id:string;category:string;party:string;entryDate:string;statement:string;description:string;debit:number;credit:number;running:number};
+export type LedgerRow={id:string;category:string;party:string;displayParty?:string;entryDate:string;statement:string;description:string;debit:number;credit:number;running:number};
 export type LedgerReport={entries:LedgerRow[];summary:{debit:number;credit:number;balance:number;count:number}};
 const categories:Record<string,string>={supplier:'الموردون',customer:'العملاء',driver:'السائقون',purchase:'المشتريات',management:'الإدارة',debt:'الديون',rent:'الإيجارات الشهرية'};
 const headers=['التاريخ','القسم','الجهة / الشخص','البيان','الوصف','مدين (ر.س)','دائن (ر.س)','الرصيد (ر.س)'];
-const values=(r:LedgerRow)=>([r.entryDate,categories[r.category]||r.category,r.party,r.statement,r.description,r.debit/100,r.credit/100,r.running/100]);
+const values=(r:LedgerRow)=>([r.entryDate,categories[r.category]||r.category,r.displayParty||r.party,r.statement,r.description,r.debit/100,r.credit/100,r.running/100]);
 const xml=(s:unknown)=>String(s).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g,'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]!));
 // Minimal standard ZIP container (stored entries); spreadsheet text is always
 // inlineStr, never a formula, including values beginning with =, +, - or @.
