@@ -63,6 +63,7 @@ export default function LedgerTransfer({accounts,initial,transfer,cancel=false,c
    </>}
    <label>{cancel?t('تاريخ الإلغاء','Cancellation date'):t('التاريخ','Date')}<input required type="date" min={cancel?transfer?.entryDate:undefined} value={entryDate} onChange={e=>setEntryDate(e.target.value)}/></label>
    {cancel?<label className="accounting-description">{t('سبب الإلغاء','Cancellation reason')}<input required maxLength={140} value={reason} onChange={e=>setReason(e.target.value)}/></label>:<>
+    {source&&destination&&<label className="accounting-description">{t('الوصف التلقائي','Automatic description')}<input readOnly value={t('تحويل من '+source.name+' إلى '+destination.name,'Transfer from '+source.name+' to '+destination.name)}/></label>}
     <label className="accounting-description">{t('البيان','Statement')}<input required maxLength={180} value={statement} onChange={e=>setStatement(e.target.value)}/></label>
     <label className="accounting-description">{t('صورة أو ملف PDF للسند (اختياري)','Receipt image or PDF (optional)')}<input type="file" accept="image/*,application/pdf,.pdf" onChange={e=>setReceipt(e.target.files?.[0]||null)}/></label>
    </>}
