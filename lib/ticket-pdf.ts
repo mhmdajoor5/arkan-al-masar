@@ -1,3 +1,4 @@
+import {stationMapUrl} from './station-map';
 import {attendance,passengerTickets,passengerTitles,identityTypes,arabicStatus} from './ticket-details';
 import type {jsPDF} from 'jspdf';
 async function fontData(signal?:AbortSignal){
@@ -37,8 +38,9 @@ for(let j=0;j<legs.length;j++){
 const ticket=legs[j],at=attendance(ticket.date,ticket.time),y=98+j*80;
 p.setFillColor('#f3f5ef');p.roundedRect(14,y,182,75,3,3,'F');right(j?'رحلة العودة':'رحلة الذهاب',190,y+9,13);
 const station=(key:string)=>stations.find(s=>s.id===key)?.ar||key;
-right('من',190,y+18,8);wrapped(station(ticket.from_station),190,y+24,117,10);
-right('إلى',190,y+37,8);wrapped(station(ticket.to_station),190,y+43,117,10);
+const mapLink=(key:string,baseline:number)=>{const url=stationMapUrl(stations.find(s=>s.id===key)?.mapUrl);if(url){p.setTextColor('#14532D');right('موقع المحطة — اضغط لفتح الخريطة',190,baseline,7);p.link(73,baseline-3,117,4,{url});p.setTextColor('#183328')}};
+right('من',190,y+18,8);wrapped(station(ticket.from_station),190,y+24,117,10);mapLink(ticket.from_station,y+33);
+right('إلى',190,y+37,8);wrapped(station(ticket.to_station),190,y+43,117,10);mapLink(ticket.to_station,y+52);
 right('تاريخ الرحلة',190,y+57,8);right(ticket.date,190,y+64,10);
 right('الحضور',151,y+57,8);right(at.time,151,y+64,11);
 if(at.date!==ticket.date)right(at.date,151,y+70,7);
