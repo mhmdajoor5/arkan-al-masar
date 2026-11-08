@@ -12,7 +12,7 @@ const dataSchema=z.object({
  startMonth:z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/)
 });
 export async function monthlyLedgerState(){
- await requireStaff(['admin']);
+ await requireStaff(['admin','accountant']);
  const [rules,history]=await Promise.all([
   db().prepare("SELECT data FROM entities WHERE kind='ledger_monthly' ORDER BY json_extract(data,'$.updated') DESC").all<{data:string}>(),
   db().prepare("SELECT data FROM entities WHERE kind='ledger_monthly_post' ORDER BY json_extract(data,'$.created') DESC LIMIT 20").all<{data:string}>()
@@ -20,7 +20,7 @@ export async function monthlyLedgerState(){
  return{rules:rules.results.map(r=>JSON.parse(r.data)),history:history.results.map(r=>JSON.parse(r.data)),earliestMonth:followingMonth(saudiMonth())};
 }
 export async function saveMonthlyLedger(body:any){
- const user=await requireStaff(['admin']);
+ const user=await requireStaff(['admin','accountant']);
  const id=z.string().uuid().parse(body.id),requestId=z.string().uuid().parse(body.requestId);
  const expected=z.number().int().nonnegative().parse(body.expectedRevision),data=dataSchema.parse(body.data);
  const key='ledger_monthly:'+id,event='ledger_monthly_change:'+requestId,request=JSON.stringify({id,expected,data});

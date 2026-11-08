@@ -619,3 +619,11 @@ html[data-arkan-splash=show] .startup-splash{display:flex;animation:arkan-splash
 .route-fare-row{grid-template-columns:repeat(auto-fit,minmax(130px,1fr));align-items:end}
 .route-fare-row button,.route-fares>button{display:inline-flex;align-items:center;gap:6px;justify-content:center}
 .route-fares>button{justify-self:start}
+
+/* Accountant (ledger-only) screen */
+.accountant-shell{min-height:100vh;background:var(--background,#f7f5f0)}
+.accountant-header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid rgba(0,0,0,.08);background:#fff;position:sticky;top:0;z-index:20}
+.accountant-header>div:not(.accountant-actions){display:grid;line-height:1.3}
+.accountant-header small{opacity:.7}
+.accountant-actions{display:flex;gap:8px;margin-inline-start:auto}
+.accountant-main{padding:16px;max-width:1200px;margin:0 auto}
