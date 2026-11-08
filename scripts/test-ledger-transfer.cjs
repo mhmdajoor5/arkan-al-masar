@@ -79,6 +79,31 @@ async function create(){for(const account of[from,to,third])await api.ledgerActi
  await Promise.all([api.ledgerAction(sameCancel),api.ledgerAction(sameCancel)]);
  assert.equal(rows().length,4);assert.equal(eventCount(),1);assert.equal(balance(from),0);assert.equal(balance(to),0);
 
+ // Deleting removes both legs (and any reversal legs) so balances return as if the transfer never happened.
+ clear();transfer=await create();
+ sql.prepare("INSERT INTO entities VALUES(?,'ledger_attachment',?)").run(crypto.randomUUID(),JSON.stringify({entry:transfer.fromEntryId,name:'receipt.jpg',image:'data:image/jpeg;base64,/9j/2Q=='}));
+ const removal={op:'deleteLedgerTransfer',id:transfer.id,requestId:crypto.randomUUID(),expectedRevision:0,data:{reason:'Entered twice'}};
+ await assert.rejects(api.ledgerAction({...removal,requestId:crypto.randomUUID(),expectedRevision:1}),/LEDGER_TRANSFER_CHANGED/);
+ await assert.rejects(api.ledgerAction({...removal,requestId:crypto.randomUUID(),data:{reason:' '}}));
+ await api.ledgerAction(removal);await api.ledgerAction(removal);
+ assert.equal(rows().length,0);assert.equal(balance(from),0);assert.equal(balance(to),0);
+ assert.equal(metadata(transfer.id).status,'deleted');assert.equal(eventCount(),1);
+ assert.equal(sql.prepare("SELECT COUNT(*) n FROM entities WHERE kind='ledger_attachment'").get().n,0);
+ assert.equal((await api.ledgerState()).entries.length,0);
+ await assert.rejects(api.ledgerAction(edit(transfer.id,1,original)),/LEDGER_TRANSFER_NOT_FOUND/);
+ await assert.rejects(api.ledgerAction(cancel(transfer.id,1)),/LEDGER_TRANSFER_NOT_FOUND/);
+ await assert.rejects(api.ledgerAction({...removal,requestId:crypto.randomUUID(),expectedRevision:1}),/LEDGER_TRANSFER_NOT_FOUND/);
+ const deleteAudit=JSON.parse(sql.prepare("SELECT data FROM entities WHERE kind='ledger_transfer_change' AND json_extract(data,'$.action')='delete'").get().data);
+ assert.equal(deleteAudit.removedEntries.length,2);assert.equal(deleteAudit.reason,'Entered twice');assert.equal(deleteAudit.actor,'admin@example.invalid');
+ // A cancelled transfer can be deleted too; its reversal legs go with it.
+ clear();transfer=await create();await api.ledgerAction(cancel(transfer.id,0));assert.equal(rows().length,4);
+ await api.ledgerAction({op:'deleteLedgerTransfer',id:transfer.id,requestId:crypto.randomUUID(),expectedRevision:1,data:{reason:'Clean up'}});
+ assert.equal(rows().length,0);assert.equal(balance(from),0);assert.equal(balance(to),0);
+ // A failure inside the batch leaves the transfer, legs and audit untouched.
+ clear();transfer=await create();const keptRows=rows(),keptMetadata=metadata(transfer.id);failStatement=2;
+ await assert.rejects(api.ledgerAction({op:'deleteLedgerTransfer',id:transfer.id,requestId:crypto.randomUUID(),expectedRevision:0,data:{reason:'Rollback'}}),/SIMULATED_DATABASE_FAILURE/);
+ assert.deepEqual(rows(),keptRows);assert.deepEqual(metadata(transfer.id),keptMetadata);assert.equal(eventCount(),0);
+
  // Inclusive date ranges use the same predicate for rows, sums, running balance and exports.
  clear();
  for(const [entryDate,debit,credit] of [['2026-09-30',100,0],['2026-10-01',200,0],['2026-10-02',0,500],['2026-10-03',0,900]]){
@@ -151,5 +176,5 @@ async function create(){for(const account of[from,to,third])await api.ledgerActi
  await assert.rejects(api.ledgerAction(edit(transfer.id,1,original)),/FORBIDDEN/);
  await assert.rejects(api.ledgerAction(cancel(transfer.id,1)),/FORBIDDEN/);
  await assert.rejects(api.ledgerState(),/FORBIDDEN/);
- console.log('PASS: legacy transfers; paired edits and balances; receipt retention; cancellation reversals; audit records; stale updates; idempotent retries; concurrent edits/cancellation; transaction rollback; linked-entry locks; automatic descriptions; inclusive date filters and matching exports; account rename/delete/restore; unchanged driver records; archived account protection; admin access.');
+ console.log('PASS: transfer deletion (both legs, reversals, receipts, audit, rollback); legacy transfers; paired edits and balances; receipt retention; cancellation reversals; audit records; stale updates; idempotent retries; concurrent edits/cancellation; transaction rollback; linked-entry locks; automatic descriptions; inclusive date filters and matching exports; account rename/delete/restore; unchanged driver records; archived account protection; admin access.');
 })().catch(error=>{console.error(error);process.exitCode=1});

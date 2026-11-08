@@ -4,12 +4,14 @@ import {ArrowRightLeft,X} from 'lucide-react';
 import {api,errorMessage,money,useLocale} from '@/lib/arkan-client';
 
 type Account={category:string;name:string;displayName?:string;archived?:number;balance:number};
-export type Transfer={id:string;revision:number;status:'active'|'cancelled';from:Pick<Account,'category'|'name'|'displayName'>;to:Pick<Account,'category'|'name'|'displayName'>;amount:number;entryDate:string;statement:string;cancelReason?:string;cancelDate?:string};
+export type Transfer={id:string;revision:number;status:'active'|'cancelled'|'deleted';from:Pick<Account,'category'|'name'|'displayName'>;to:Pick<Account,'category'|'name'|'displayName'>;amount:number;entryDate:string;statement:string;cancelReason?:string;cancelDate?:string};
 type Result={id:string;fromEntryId:string;toEntryId:string;status?:string};
-type Props={accounts:Account[];initial?:Account;transfer?:Transfer;cancel?:boolean;categoryName:(category:string)=>string;onClose:()=>void;onComplete:(result:Result,source:Account,receipt:File|null)=>Promise<void>};
+type Props={accounts:Account[];initial?:Account;transfer?:Transfer;cancel?:boolean;remove?:boolean;categoryName:(category:string)=>string;onClose:()=>void;onComplete:(result:Result,source:Account,receipt:File|null)=>Promise<void>};
 const key=(account:Pick<Account,'category'|'name'>)=>JSON.stringify([account.category,account.name]);
 
-export default function LedgerTransfer({accounts,initial,transfer,cancel=false,categoryName,onClose,onComplete}:Props){
+export default function LedgerTransfer({accounts,initial,transfer,cancel:cancelling=false,remove=false,categoryName,onClose,onComplete}:Props){
+ // Deleting shares the cancellation layout: a read-only summary plus a required reason.
+ const cancel=cancelling||remove;
  const {en,t}=useLocale(),dialog=useRef<HTMLDialogElement>(null),inFlight=useRef(false),requestId=useRef('');
  const [from,setFrom]=useState(transfer?key(transfer.from):initial?key(initial):'');
  const [to,setTo]=useState(transfer?key(transfer.to):'');
@@ -21,12 +23,12 @@ export default function LedgerTransfer({accounts,initial,transfer,cancel=false,c
  useEffect(()=>{const element=dialog.current;element?.showModal();return()=>element?.close()},[]);
  const source=accounts.find(a=>key(a)===from),destination=accounts.find(a=>key(a)===to);
  const halalas=Math.round(Number(amount)*100),validAmount=/^\d+(\.\d{1,2})?$/.test(amount)&&halalas>0&&halalas<=100000000000;
- const title=cancel?t('إلغاء التحويل','Cancel transfer'):transfer?t('تعديل التحويل','Edit transfer'):t('تحويل بين الحسابات','Transfer between accounts');
+ const title=remove?t('حذف التحويل','Delete transfer'):cancel?t('إلغاء التحويل','Cancel transfer'):transfer?t('تعديل التحويل','Edit transfer'):t('تحويل بين الحسابات','Transfer between accounts');
  // Remove the original effect before showing the projected balance for an edit.
  const affectedAccounts=accounts.filter(a=>[from,to,...(transfer?[key(transfer.from),key(transfer.to)]:[])].includes(key(a)));
  const projectedBalance=(account:Account)=>{
   const accountKey=key(account);let value=account.balance;
-  if(transfer){if(accountKey===key(transfer.from))value+=transfer.amount;if(accountKey===key(transfer.to))value-=transfer.amount}
+  if(transfer&&transfer.status!=='cancelled'){if(accountKey===key(transfer.from))value+=transfer.amount;if(accountKey===key(transfer.to))value-=transfer.amount}
   if(!cancel){if(accountKey===from)value-=halalas;if(accountKey===to)value+=halalas}
   return value;
  };
@@ -34,14 +36,14 @@ export default function LedgerTransfer({accounts,initial,transfer,cancel=false,c
   event.preventDefault();if(inFlight.current)return;
   if(!source||!destination||from===to||!validAmount){setError(t('اختر حسابين مختلفين ومبلغًا صحيحًا أكبر من صفر.','Choose two different accounts and a valid positive amount.'));return}
   if(!cancel&&(source.archived||destination.archived)){setError(t('استرجع الحساب المحذوف أولًا أو اختر حسابًا آخر.','Restore the deleted account first or choose another account.'));return}
-  if(cancel&&!reason.trim()){setError(t('أدخل سبب إلغاء التحويل.','Enter a cancellation reason.'));return}
+  if(cancel&&!reason.trim()){setError(remove?t('أدخل سبب حذف التحويل.','Enter a reason for deleting.'):t('أدخل سبب إلغاء التحويل.','Enter a cancellation reason.'));return}
   if(!cancel&&!statement.trim()){setError(t('أدخل بيان التحويل.','Enter a transfer statement.'));return}
   if(receipt){const pdf=receipt.type==='application/pdf'||/\.pdf$/i.test(receipt.name);if(!receipt.size||receipt.size>(pdf?1000000:25000000)){setError(t('اختر PDF حتى ١ ميجابايت أو صورة حتى ٢٥ ميجابايت.','Choose a PDF up to 1 MB or an image up to 25 MB.'));return}}
   if(!requestId.current)requestId.current=crypto.randomUUID();
   inFlight.current=true;setBusy(true);setAttempted(true);setError('');
   try{
-   const operation=cancel?'cancelLedgerTransfer':transfer?'updateLedgerTransfer':'createLedgerTransfer';
-   const data=cancel?{entryDate,reason:reason.trim()}:{from:{category:source.category,name:source.name},to:{category:destination.category,name:destination.name},amount:halalas,entryDate,statement:statement.trim()};
+   const operation=remove?'deleteLedgerTransfer':cancel?'cancelLedgerTransfer':transfer?'updateLedgerTransfer':'createLedgerTransfer';
+   const data=remove?{reason:reason.trim()}:cancel?{entryDate,reason:reason.trim()}:{from:{category:source.category,name:source.name},to:{category:destination.category,name:destination.name},amount:halalas,entryDate,statement:statement.trim()};
    const result=await api(operation,{id:transfer?.id||requestId.current,...(transfer?{requestId:requestId.current,expectedRevision:transfer.revision}:{}),data});
    await onComplete(result,source,receipt);
   }catch(e:any){
@@ -57,13 +59,13 @@ export default function LedgerTransfer({accounts,initial,transfer,cancel=false,c
  return <dialog ref={dialog} className="ledger-transfer-dialog" onCancel={event=>{event.preventDefault();if(!busy)onClose()}} aria-labelledby="transfer-title">
   <div className="section-heading"><div><h2 id="transfer-title"><ArrowRightLeft size={22}/>{title}</h2><p>{transfer?t('يُطبّق الإجراء على الحسابين معًا، ويُحفظ سجل التغيير.','Changes apply to both accounts together and are recorded.'):t('تحويل محاسبي داخلي بالريال السعودي','Internal accounting transfer in SAR')}</p></div><button type="button" className="icon-button" disabled={busy} aria-label={t('إغلاق','Close')} onClick={onClose}><X size={20}/></button></div>
   <form className="accounting-form ledger-transfer-form" onSubmit={submit}><fieldset disabled={busy||attempted}>
-   {cancel&&transfer?<div className="accounting-description"><p><b>{t('من: ','From: ')}{transfer.from.displayName||transfer.from.name}</b></p><p><b>{t('إلى: ','To: ')}{transfer.to.displayName||transfer.to.name}</b></p><p>{money(transfer.amount,en)} · {transfer.entryDate}</p><p>{transfer.statement}</p><p>{t('سيُسجّل قيد عكسي يعيد أثر التحويل على الحسابين. سيبقى التحويل ومرفقاته محفوظين، ولا يمكن تعديل التحويل بعد إلغائه.','Reversal entries will undo the transfer in both accounts. The transfer and receipts remain on record; a cancelled transfer cannot be edited.')}</p></div>:<>
+   {cancel&&transfer?<div className="accounting-description"><p><b>{t('من: ','From: ')}{transfer.from.displayName||transfer.from.name}</b></p><p><b>{t('إلى: ','To: ')}{transfer.to.displayName||transfer.to.name}</b></p><p>{money(transfer.amount,en)} · {transfer.entryDate}</p><p>{transfer.statement}</p><p>{remove?t('سيُحذف التحويل نهائيًا من كشف الحسابين مع مرفقاته وأي قيد عكسي سابق، ويعود رصيد الحسابين كأن التحويل لم يحدث. يُحفظ سجل داخلي بمن حذفه والسبب.','The transfer, its receipts and any earlier reversal are removed from both statements, and both balances return to how they were before it. An internal log keeps who deleted it and why.'):t('سيُسجّل قيد عكسي يعيد أثر التحويل على الحسابين. سيبقى التحويل ومرفقاته محفوظين، ولا يمكن تعديل التحويل بعد إلغائه.','Reversal entries will undo the transfer in both accounts. The transfer and receipts remain on record; a cancelled transfer cannot be edited.')}</p></div>:<>
     <label>{t('من حساب','From account')}<select required value={from} onChange={e=>setFrom(e.target.value)}><option value="">{t('اختر الحساب','Choose account')}</option>{accounts.filter(a=>!a.archived||key(a)===from||key(a)===to).map(a=><option key={key(a)} value={key(a)} disabled={!!a.archived||key(a)===to}>{a.displayName||a.name}{a.archived?t(' (محذوف)',' (deleted)'):''} — {categoryName(a.category)}</option>)}</select></label>
     <label>{t('إلى حساب','To account')}<select required value={to} onChange={e=>setTo(e.target.value)}><option value="">{t('اختر الحساب','Choose account')}</option>{accounts.filter(a=>!a.archived||key(a)===from||key(a)===to).map(a=><option key={key(a)} value={key(a)} disabled={!!a.archived||key(a)===from}>{a.displayName||a.name}{a.archived?t(' (محذوف)',' (deleted)'):''} — {categoryName(a.category)}</option>)}</select></label>
     <label>{t('المبلغ (ر.س)','Amount (SAR)')}<input required type="number" inputMode="decimal" min="0.01" max="1000000000" step="0.01" dir="ltr" value={amount} onChange={e=>setAmount(e.target.value)}/></label>
    </>}
-   <label>{cancel?t('تاريخ الإلغاء','Cancellation date'):t('التاريخ','Date')}<input required type="date" min={cancel?transfer?.entryDate:undefined} value={entryDate} onChange={e=>setEntryDate(e.target.value)}/></label>
-   {cancel?<label className="accounting-description">{t('سبب الإلغاء','Cancellation reason')}<input required maxLength={140} value={reason} onChange={e=>setReason(e.target.value)}/></label>:<>
+   {!remove&&<label>{cancel?t('تاريخ الإلغاء','Cancellation date'):t('التاريخ','Date')}<input required type="date" min={cancel?transfer?.entryDate:undefined} value={entryDate} onChange={e=>setEntryDate(e.target.value)}/></label>}
+   {cancel?<label className="accounting-description">{remove?t('سبب الحذف','Reason for deleting'):t('سبب الإلغاء','Cancellation reason')}<input required maxLength={140} value={reason} onChange={e=>setReason(e.target.value)}/></label>:<>
     {source&&destination&&<label className="accounting-description">{t('الوصف التلقائي','Automatic description')}<input readOnly value={t('تحويل من '+ (source.displayName||source.name)+' إلى '+(destination.displayName||destination.name),'Transfer from '+ (source.displayName||source.name)+' to '+(destination.displayName||destination.name))}/></label>}
     <label className="accounting-description">{t('البيان','Statement')}<input required maxLength={180} value={statement} onChange={e=>setStatement(e.target.value)}/></label>
     <label className="accounting-description">{t('صورة أو ملف PDF للسند (اختياري)','Receipt image or PDF (optional)')}<input type="file" accept="image/*,application/pdf,.pdf" onChange={e=>setReceipt(e.target.files?.[0]||null)}/></label>
@@ -72,7 +74,7 @@ export default function LedgerTransfer({accounts,initial,transfer,cancel=false,c
   {source&&destination&&validAmount&&<div className="transfer-summary">{affectedAccounts.map(account=><p key={key(account)}><b>{account.displayName||account.name}</b>: <span>{money(account.balance,en)}</span> ← <b>{money(projectedBalance(account),en)}</b></p>)}<small>{t('الرصيد الحالي ← الرصيد بعد الحفظ. القيم تقديرية حتى الحفظ.','Current balance → balance after saving. Values are estimates until saved.')}</small></div>}
   {error&&<p role="alert" className="ops-error">{error}</p>}
   {attempted&&!busy&&error&&<p className="ops-form-note">{t('إعادة المحاولة بنفس البيانات لا تكرر العملية. إذا تغيّر التحويل، أغلق النافذة وافتحه من جديد.','Retrying the same details will not repeat the operation. If the transfer changed, close and reopen it.')}</p>}
-  <div className="accounting-form-actions"><button type="button" className="secondary" disabled={busy} onClick={onClose}>{t('إغلاق','Close')}</button><button className="primary" disabled={busy||accounts.length<2}>{busy?t('جارٍ الحفظ…','Saving…'):attempted?t('إعادة المحاولة','Retry'):cancel?t('تأكيد إلغاء التحويل','Confirm cancellation'):transfer?t('حفظ تعديل الحسابين','Save both accounts'):t('تأكيد التحويل','Confirm transfer')}</button></div>
+  <div className="accounting-form-actions"><button type="button" className="secondary" disabled={busy} onClick={onClose}>{t('إغلاق','Close')}</button><button className="primary" disabled={busy||accounts.length<2}>{busy?t('جارٍ الحفظ…','Saving…'):attempted?t('إعادة المحاولة','Retry'):remove?t('تأكيد حذف التحويل','Confirm deletion'):cancel?t('تأكيد إلغاء التحويل','Confirm cancellation'):transfer?t('حفظ تعديل الحسابين','Save both accounts'):t('تأكيد التحويل','Confirm transfer')}</button></div>
   </form>
  </dialog>;
 }

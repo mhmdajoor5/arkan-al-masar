@@ -14,6 +14,9 @@ export async function saveSchedule(key:string,data:any){
   for(const trip of trips){
     const active=data.active&&trip.date>=data.start&&trip.date<=data.end;
     const starts=Date.parse(trip.date+'T'+data.time+':00+03:00');
+    // A trip the edit does not touch (e.g. only the end date was extended) keeps
+    // its bookings untouched, so it must not block the schedule update.
+    if(active&&trip.time===data.time&&trip.starts===starts&&trip.from_station===data.from&&trip.to_station===data.to&&(trip.bus||'')===(data.bus||'')&&(trip.driver||'')===(data.driver||'')&&Number(trip.seats)===Number(data.seats))continue;
     // Check the snapshot and reservations inside the same atomic D1 batch.
     const fields=['date','time','starts','from_station','to_station','bus','driver','status','seats'];
     statements.push(check('EXISTS(SELECT 1 FROM trips WHERE id=? AND '+fields.map(f=>f+' IS ?').join(' AND ')+") AND NOT EXISTS(SELECT 1 FROM holds WHERE trip_id=? AND (status='booked' OR expires>?)) AND NOT EXISTS(SELECT 1 FROM tickets k JOIN bookings b ON b.code=k.booking_code WHERE k.trip_id=? AND b.status<>'cancelled') AND NOT EXISTS(SELECT 1 FROM trip_progress WHERE trip_id=? AND phase IN ('boarding','in_transit','arrived'))",[trip.id,...fields.map(f=>trip[f]),trip.id,at,trip.id,trip.id]));

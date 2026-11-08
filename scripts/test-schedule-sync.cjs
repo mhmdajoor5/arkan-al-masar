@@ -34,8 +34,32 @@ sql.exec('DELETE FROM holds');
 entity('bus','bus',{seats:49,active:true});
 beforeBatch=()=>sql.prepare('INSERT INTO trips VALUES(?,?,?,?,?,?,?,?,?,?)').run('manual','2026-10-05','12:00',Date.parse('2026-10-05T12:00:00+03:00'),'jeddah','makkah','bus','','active',49);
 await assert.rejects(save({...revised,time:'12:00',bus:'bus'}),/SCHEDULE_UPDATE_BLOCKED/);assert.equal(trip('2026-10-04').time,'10:00');
+// Extending the range (or making it continuous) must work even when an upcoming trip is booked.
+sql.prepare("INSERT INTO holds VALUES(?,1,'booked-token',?,'booked')").run('daily_2026-10-05',clock-1);
+await save({...revised,end:'2099-12-31'});
+assert.equal(JSON.parse(sql.prepare("SELECT data FROM entities WHERE id='daily'").get().data).end,'2099-12-31');
+assert.equal(trip('2026-10-05').status,'active');assert.equal(trip('2026-10-05').time,'10:00');
+await api.materialize('2026-11-20');assert.equal(trip('2026-11-20').status,'active');assert.equal(trip('2026-11-20').time,'10:00');
+// Changing a booked trip itself is still refused, and nothing is saved.
+await assert.rejects(save({...revised,end:'2099-12-31',time:'11:00'}),/SCHEDULE_UPDATE_BLOCKED/);
+assert.equal(trip('2026-10-04').time,'10:00');assert.equal(JSON.parse(sql.prepare("SELECT data FROM entities WHERE id='daily'").get().data).time,'10:00');
+sql.exec('DELETE FROM holds');
 await save({...revised,end:'2026-10-04'});assert.equal(trip('2026-10-05').status,'cancelled');assert.equal(trip('2026-10-07').status,'cancelled');
 clock=Date.parse('2026-10-05T00:00:00+03:00');await save({...revised,time:'14:00'});assert.equal(trip('2026-10-04').time,'10:00');
 assert.equal(sql.prepare("SELECT count(*) n FROM entities WHERE kind='schedule_change'").get().n,0);
-console.log('PASS schedule sync: generated and new trips, time/route/capacity, cancellations, history, shortened ranges, reservation race and assignment race with atomic rollback.');
+// Route fares: a city pair overrides the general fare in both directions; other pairs keep the general fare.
+entity('madinah','station',{city:'madinah',active:true});
+const settingsBase={one:15,round:30,whatsapp:'',contactEmail:'',cancellationAr:'سياسة الإلغاء',cancellationEn:'Cancellation policy'};
+await api.adminAction({op:'saveSettings',data:{...settingsBase,routeFares:[{a:'jeddah',b:'madinah',one:80,round:150}]}});
+await assert.rejects(api.adminAction({op:'saveSettings',data:{...settingsBase,routeFares:[{a:'jeddah',b:'madinah',one:1,round:2},{a:'madinah',b:'jeddah',one:3,round:4}]}}));
+const req={headers:{get:()=> '203.0.113.9'}};
+entity('madinah-run','schedule',{...schedule,to:'madinah',time:'06:00',start:'2026-10-01',end:'2099-12-31'});entity('makkah-run','schedule',{...schedule,time:'05:00',start:'2026-10-01',end:'2099-12-31'});
+await api.materialize('2026-11-21');
+const hold=await api.makeHold({legs:[{trip:'madinah-run_2026-11-21',seats:[1,2]}]},req);
+assert.equal(hold.amount,2*8000);
+const makkahHold=await api.makeHold({legs:[{trip:'makkah-run_2026-11-21',seats:[3]}]},req);
+assert.equal(makkahHold.amount,1500);
+sql.exec('DELETE FROM holds; DELETE FROM hold_groups');
+
+console.log('PASS schedule sync: generated and new trips, time/route/capacity, cancellations, history, shortened ranges, extending/continuous ranges with booked trips, reservation race and assignment race with atomic rollback; route fares per city pair.');
 })().catch(e=>{console.error(e);process.exitCode=1});
