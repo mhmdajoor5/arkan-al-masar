@@ -3,6 +3,11 @@
   "name": "arkan-al-masar",
   "main": "worker.ts",
   "triggers": { "crons": ["0 * * * *"] },
+  "workers_dev": true,
+  "routes": [
+    { "pattern": "arkanalmasar.sa", "custom_domain": true },
+    { "pattern": "www.arkanalmasar.sa", "custom_domain": true }
+  ],
   "compatibility_date": "2026-05-15",
   "compatibility_flags": [
     "nodejs_compat"
@@ -17,6 +22,6 @@
   ],
   "vars": {
     "BOOKING_MODE": "demo",
-    "VAPID_SUBJECT": "https://arkan-masar-booking.mhmdajoor4.chatgpt.site/contact"
+    "VAPID_SUBJECT": "https://arkanalmasar.sa"
   }
 }
