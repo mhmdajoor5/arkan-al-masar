@@ -15,7 +15,7 @@ const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status
 function loadLocal(file){
  const compiled=ts.transpileModule(fs.readFileSync(path.join(root,file),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
  const target={exports:{}};
- vm.runInNewContext(compiled,{exports:target.exports,module:target,require:id=>id==='./arkan-server'?{db:()=>db,fail}:id==='./operations-auth'?{requireStaff:async roles=>{assert.deepEqual(Array.from(roles),['admin']);if(!authorized)fail('FORBIDDEN',403);return{email:'admin@example.invalid'}}}:id==='./ledger-accounts'?loadLocal('lib/ledger-accounts.ts'):projectRequire(id),crypto:globalThis.crypto,URL,Uint8Array,btoa,Date});
+ vm.runInNewContext(compiled,{exports:target.exports,module:target,require:id=>id==='./arkan-server'?{db:()=>db,fail}:id==='./operations-auth'?{requireStaff:async roles=>{assert.deepEqual(Array.from(roles),['admin','accountant']);if(!authorized)fail('FORBIDDEN',403);return{email:'admin@example.invalid'}}}:id==='./ledger-accounts'?loadLocal('lib/ledger-accounts.ts'):projectRequire(id),crypto:globalThis.crypto,URL,Uint8Array,btoa,Date});
  return target.exports;
 }
 const api=loadLocal('lib/ledger.ts');
