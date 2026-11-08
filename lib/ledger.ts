@@ -52,6 +52,7 @@ async function changeLedgerTransfer(body:any,actor:string){
  const row=await db().prepare("SELECT data FROM entities WHERE id=? AND kind='ledger_transfer'").bind(key).first<{data:string}>();
  if(!row)fail('LEDGER_TRANSFER_NOT_FOUND',404);
  const saved=JSON.parse(row!.data),before=transferData.parse(JSON.parse(saved.request));
+ if(saved.status==='deleted')fail('LEDGER_TRANSFER_NOT_FOUND',404);
  if(saved.status==='cancelled')fail('LEDGER_TRANSFER_CANCELLED',409);
  if((saved.revision||0)!==expected)fail('LEDGER_TRANSFER_CHANGED',409);
  if(cancellation&&cancellation.entryDate<before.entryDate)fail('INVALID_INPUT');
@@ -83,6 +84,47 @@ async function changeLedgerTransfer(body:any,actor:string){
  const results=await db().batch(commands),completed=results[results.length-1].results[0] as {data:string}|undefined;
  if(!completed)fail('LEDGER_TRANSFER_CHANGED',409);
  const recorded=JSON.parse(completed.data);
+ if(recorded.request!==request)fail('LEDGER_TRANSFER_CHANGED',409);
+ return recorded.result;
+}
+
+// Permanently removes a transfer from both accounts (both legs and any reversal legs),
+// so a mistaken transfer no longer needs a reversing entry. The transfer metadata stays
+// as status "deleted" together with an audit event recording who deleted it and why.
+async function deleteLedgerTransfer(body:any,actor:string){
+ const id=z.string().uuid().parse(body.id).toLowerCase();
+ const requestId=z.string().uuid().parse(body.requestId).toLowerCase();
+ const expected=z.number().int().nonnegative().parse(body.expectedRevision);
+ const {reason}=z.object({reason:z.string().trim().min(1).max(140)}).parse(body.data);
+ const key='ledger_transfer:'+id,eventKey='ledger_transfer_change:'+requestId;
+ const request=JSON.stringify({id,op:'deleteLedgerTransfer',expected,reason});
+ const previous=await db().prepare("SELECT data FROM entities WHERE id=? AND kind='ledger_transfer_change'").bind(eventKey).first<{data:string}>();
+ if(previous){const event=JSON.parse(previous.data);if(event.request!==request)fail('LEDGER_TRANSFER_CHANGED',409);return event.result}
+ const row=await db().prepare("SELECT data FROM entities WHERE id=? AND kind='ledger_transfer'").bind(key).first<{data:string}>();
+ if(!row)fail('LEDGER_TRANSFER_NOT_FOUND',404);
+ const saved=JSON.parse(row!.data);
+ if(saved.status==='deleted')fail('LEDGER_TRANSFER_NOT_FOUND',404);
+ if((saved.revision||0)!==expected)fail('LEDGER_TRANSFER_CHANGED',409);
+ const before=transferData.parse(JSON.parse(saved.request));
+ const entryIds:string[]=[saved.fromEntryId,saved.toEntryId,saved.reversalFromEntryId,saved.reversalToEntryId].filter(Boolean);
+ const removed=(await db().prepare('SELECT * FROM ledger_entries WHERE id IN ('+entryIds.map(()=>'?').join(',')+')').bind(...entryIds).all()).results;
+ const revision=expected+1,nonce=crypto.randomUUID(),changed=Date.now();
+ const next={...saved,revision,lastMutation:nonce,updated:changed,updatedBy:actor,status:'deleted',previousStatus:saved.status||'active',deletedAt:changed,deletedBy:actor,deleteReason:reason};
+ const result={ok:true,id,revision,status:'deleted'};
+ const event=JSON.stringify({request,transferId:id,action:'delete',before,previousStatus:saved.status||'active',removedEntries:removed,reason,created:changed,actor,result});
+ const claim="EXISTS(SELECT 1 FROM entities WHERE id=? AND kind='ledger_transfer' AND json_extract(data,'$.lastMutation')=?)";
+ const ids=entryIds.map(()=>'?').join(',');
+ // One D1 batch: claim the metadata, drop receipts and every leg, and record the audit event.
+ const commands=[
+  db().prepare("UPDATE entities SET data=? WHERE id=? AND kind='ledger_transfer' AND data=? AND NOT EXISTS(SELECT 1 FROM entities WHERE id=?)").bind(JSON.stringify(next),key,row!.data,eventKey),
+  db().prepare("DELETE FROM entities WHERE kind='ledger_attachment' AND json_extract(data,'$.entry') IN ("+ids+') AND '+claim).bind(...entryIds,key,nonce),
+  db().prepare('DELETE FROM ledger_entries WHERE id IN ('+ids+') AND '+claim).bind(...entryIds,key,nonce),
+  db().prepare("INSERT INTO entities(id,kind,data) SELECT ?,'ledger_transfer_change',? WHERE "+claim).bind(eventKey,event,key,nonce),
+  db().prepare("SELECT data FROM entities WHERE id=? AND kind='ledger_transfer_change'").bind(eventKey)
+ ];
+ const results=await db().batch(commands),completed=results[results.length-1].results[0] as {data:string}|undefined;
+ if(!completed)fail('LEDGER_TRANSFER_CHANGED',409);
+ const recorded=JSON.parse(completed!.data);
  if(recorded.request!==request)fail('LEDGER_TRANSFER_CHANGED',409);
  return recorded.result;
 }
@@ -123,6 +165,7 @@ export async function ledgerAction(body:any){
  if(['renameLedgerAccount','archiveLedgerAccount','restoreLedgerAccount'].includes(body.op))return changeLedgerAccount(body,user.email);
  if(body.op==='createLedgerTransfer')return createLedgerTransfer(body,user.email);
  if(body.op==='updateLedgerTransfer'||body.op==='cancelLedgerTransfer')return changeLedgerTransfer(body,user.email);
+ if(body.op==='deleteLedgerTransfer')return deleteLedgerTransfer(body,user.email);
  if(body.op==='addLedgerParty')return addLedgerAccount(body);
  if(body.op==='addLedgerDescription'){const name=z.string().trim().min(1).max(80).parse(body.name).replace(/\s+/g,' ').normalize('NFC');await db().prepare("INSERT INTO entities(id,kind,data) VALUES(?,'ledger_description',?) ON CONFLICT(id) DO NOTHING").bind('ledger_description:'+name.toLocaleLowerCase(),JSON.stringify({name})).run();return{ok:true,name}}
  if(body.op==='saveLedger'){const data=z.object({category,party:z.string().trim().min(1).max(140),entryDate:date,statement:z.string().trim().min(1).max(180),description:z.string().trim().max(1000),debit:z.number().int().min(0).max(100000000000),credit:z.number().int().min(0).max(100000000000)}).refine(value=>(value.debit>0)!==(value.credit>0),{message:'LEDGER_SIDE_REQUIRED'}).parse(body.data);if(body.id){const key=z.string().uuid().parse(body.id);await ensureLedgerEditable(key);const expected=z.object({category:z.string(),party:z.string(),entryDate:z.string(),statement:z.string(),description:z.string(),debit:z.number(),credit:z.number()}).parse(body.expected);const result=await db().prepare('UPDATE ledger_entries SET category=?,party=?,entry_date=?,statement=?,description=?,debit=?,credit=? WHERE id=? AND category=? AND party=? AND entry_date=? AND statement=? AND description=? AND debit=? AND credit=? AND '+accountAvailable+' AND NOT '+transferLinked).bind(data.category,data.party,data.entryDate,data.statement,data.description,data.debit,data.credit,key,expected.category,expected.party,expected.entryDate,expected.statement,expected.description,expected.debit,expected.credit,data.category,data.party).run();if(!result.meta.changes)fail('LEDGER_CHANGED',409);return{ok:true,id:key}}const newId=crypto.randomUUID();const inserted=await db().prepare('INSERT INTO ledger_entries(id,category,party,entry_date,statement,description,debit,credit,created,actor) SELECT ?,?,?,?,?,?,?,?,?,? WHERE '+accountAvailable).bind(newId,data.category,data.party,data.entryDate,data.statement,data.description,data.debit,data.credit,Date.now(),user.email,data.category,data.party).run();if(!inserted.meta.changes)fail('LEDGER_ACCOUNT_ARCHIVED',409);return{ok:true,id:newId}}
