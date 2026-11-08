@@ -619,3 +619,9 @@ html[data-arkan-splash=show] .startup-splash{display:flex;animation:arkan-splash
 .route-fare-row{grid-template-columns:repeat(auto-fit,minmax(130px,1fr));align-items:end}
 .route-fare-row button,.route-fares>button{display:inline-flex;align-items:center;gap:6px;justify-content:center}
 .route-fares>button{justify-self:start}
+
+/* Online payment (MyFatoorah) */
+.online-paid{display:flex;align-items:center;gap:8px;justify-content:center;color:#15803d;font-weight:600}
+.online-pending{margin:16px auto;max-width:640px;text-align:start}
+.online-pending h2{display:flex;align-items:center;gap:8px;font-size:1.1rem;margin:0 0 8px}
+.online-pending .payment-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
