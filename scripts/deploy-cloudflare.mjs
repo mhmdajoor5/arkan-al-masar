@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import {ensureLedgerDatabase} from './ledger-migration.mjs';
+import {ensureLedgerDatabase,ensureTripIndexes} from './ledger-migration.mjs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { projectRoot, readConfig, validateConfig } from './cloudflare-config.mjs';
@@ -49,6 +49,7 @@ try {
       throw new Error('Provision the initial owner securely, or import existing accounts, before deployment.');
     }
     await ensureLedgerDatabase(run);
+    await ensureTripIndexes(run);
     await run(['deploy', '--config', 'dist/server/wrangler.json']);
   }
 } catch (error) {

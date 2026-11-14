@@ -22,3 +22,11 @@ export async function ensureLedgerDatabase(run){
  await execute("INSERT OR IGNORE INTO d1_migrations(name) VALUES('0004_ledger_entries.sql');");
  console.log('Accounting ledger database is ready.');
 }
+
+// Read-path indexes for trips (date lookups and the bus/driver overlap check). Idempotent; recorded once.
+export async function ensureTripIndexes(run){
+ const output=await run(['d1','execute','DB','--config','wrangler.json','--remote','--json','--command',"CREATE INDEX IF NOT EXISTS trips_date ON trips(date); CREATE INDEX IF NOT EXISTS trips_status_starts ON trips(status,starts); INSERT OR IGNORE INTO d1_migrations(name) VALUES('0005_trip_indexes.sql');"],true);
+ const result=JSON.parse(output);
+ if(!Array.isArray(result)||result.some(x=>x.success===false))throw Error('Trip index migration failed.');
+ console.log('Trip indexes are ready.');
+}
