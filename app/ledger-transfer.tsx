@@ -1,6 +1,7 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
-import {ArrowRightLeft,X} from 'lucide-react';
+import {ArrowRightLeft,Search,X} from 'lucide-react';
+import {ledgerCategories} from '@/lib/ledger-categories';
 import {api,errorMessage,money,useLocale} from '@/lib/arkan-client';
 
 type Account={category:string;name:string;displayName?:string;archived?:number;balance:number};
@@ -8,6 +9,21 @@ export type Transfer={id:string;revision:number;status:'active'|'cancelled'|'del
 type Result={id:string;fromEntryId:string;toEntryId:string;status?:string};
 type Props={accounts:Account[];initial?:Account;transfer?:Transfer;cancel?:boolean;remove?:boolean;categoryName:(category:string)=>string;onClose:()=>void;onComplete:(result:Result,source:Account,receipt:File|null)=>Promise<void>};
 const key=(account:Pick<Account,'category'|'name'>)=>JSON.stringify([account.category,account.name]);
+
+// Account select with its own category filter and name search, like the accounts page.
+function AccountPicker({label,value,other,accounts,categoryName,onChange}:{label:string;value:string;other:string;accounts:Account[];categoryName:(category:string)=>string;onChange:(value:string)=>void}){
+ const {en,t}=useLocale(),[section,setSection]=useState('all'),[search,setSearch]=useState('');
+ const term=search.trim().toLocaleLowerCase();
+ const matches=accounts.filter(a=>!a.archived&&(section==='all'||a.category===section)&&(a.displayName||a.name).toLocaleLowerCase().includes(term));
+ // Keep the chosen account listed even when the filter would hide it.
+ const options=[...accounts.filter(a=>key(a)===value&&!matches.includes(a)),...matches];
+ useEffect(()=>{if(matches.length===1&&term&&!value&&key(matches[0])!==other)onChange(key(matches[0]))},[term,section]);
+ return <div className="accounting-description transfer-account-picker" role="group" aria-label={label}>
+  <b>{label}</b>
+  <div className="accounting-filters"><select aria-label={t('القسم','Category')} value={section} onChange={e=>setSection(e.target.value)}><option value="all">{t('جميع الأقسام','All categories')}</option>{ledgerCategories.map(item=><option key={item[0]} value={item[0]}>{en?item[2]:item[1]}</option>)}</select><label className="account-directory-search"><Search size={18}/><input aria-label={t('بحث بالاسم','Search by name')} placeholder={t('بحث بالاسم…','Search by name…')} value={search} onChange={e=>setSearch(e.target.value)}/></label></div>
+  <select required aria-label={label} value={value} onChange={e=>onChange(e.target.value)}><option value="">{matches.length?t('اختر الحساب','Choose account'):t('لا توجد حسابات مطابقة','No matching accounts')}</option>{options.map(a=><option key={key(a)} value={key(a)} disabled={!!a.archived||key(a)===other}>{a.displayName||a.name}{a.archived?t(' (محذوف)',' (deleted)'):''} — {categoryName(a.category)}</option>)}</select>
+ </div>;
+}
 
 export default function LedgerTransfer({accounts,initial,transfer,cancel:cancelling=false,remove=false,categoryName,onClose,onComplete}:Props){
  // Deleting shares the cancellation layout: a read-only summary plus a required reason.
@@ -60,8 +76,8 @@ export default function LedgerTransfer({accounts,initial,transfer,cancel:cancell
   <div className="section-heading"><div><h2 id="transfer-title"><ArrowRightLeft size={22}/>{title}</h2><p>{transfer?t('يُطبّق الإجراء على الحسابين معًا، ويُحفظ سجل التغيير.','Changes apply to both accounts together and are recorded.'):t('تحويل محاسبي داخلي بالريال السعودي','Internal accounting transfer in SAR')}</p></div><button type="button" className="icon-button" disabled={busy} aria-label={t('إغلاق','Close')} onClick={onClose}><X size={20}/></button></div>
   <form className="accounting-form ledger-transfer-form" onSubmit={submit}><fieldset disabled={busy||attempted}>
    {cancel&&transfer?<div className="accounting-description"><p><b>{t('من: ','From: ')}{transfer.from.displayName||transfer.from.name}</b></p><p><b>{t('إلى: ','To: ')}{transfer.to.displayName||transfer.to.name}</b></p><p>{money(transfer.amount,en)} · {transfer.entryDate}</p><p>{transfer.statement}</p><p>{remove?t('سيُحذف التحويل نهائيًا من كشف الحسابين مع مرفقاته وأي قيد عكسي سابق، ويعود رصيد الحسابين كأن التحويل لم يحدث. يُحفظ سجل داخلي بمن حذفه والسبب.','The transfer, its receipts and any earlier reversal are removed from both statements, and both balances return to how they were before it. An internal log keeps who deleted it and why.'):t('سيُسجّل قيد عكسي يعيد أثر التحويل على الحسابين. سيبقى التحويل ومرفقاته محفوظين، ولا يمكن تعديل التحويل بعد إلغائه.','Reversal entries will undo the transfer in both accounts. The transfer and receipts remain on record; a cancelled transfer cannot be edited.')}</p></div>:<>
-    <label>{t('من حساب','From account')}<select required value={from} onChange={e=>setFrom(e.target.value)}><option value="">{t('اختر الحساب','Choose account')}</option>{accounts.filter(a=>!a.archived||key(a)===from||key(a)===to).map(a=><option key={key(a)} value={key(a)} disabled={!!a.archived||key(a)===to}>{a.displayName||a.name}{a.archived?t(' (محذوف)',' (deleted)'):''} — {categoryName(a.category)}</option>)}</select></label>
-    <label>{t('إلى حساب','To account')}<select required value={to} onChange={e=>setTo(e.target.value)}><option value="">{t('اختر الحساب','Choose account')}</option>{accounts.filter(a=>!a.archived||key(a)===from||key(a)===to).map(a=><option key={key(a)} value={key(a)} disabled={!!a.archived||key(a)===from}>{a.displayName||a.name}{a.archived?t(' (محذوف)',' (deleted)'):''} — {categoryName(a.category)}</option>)}</select></label>
+    <AccountPicker label={t('من حساب','From account')} value={from} other={to} accounts={accounts} categoryName={categoryName} onChange={setFrom}/>
+    <AccountPicker label={t('إلى حساب','To account')} value={to} other={from} accounts={accounts} categoryName={categoryName} onChange={setTo}/>
     <label>{t('المبلغ (ر.س)','Amount (SAR)')}<input required type="number" inputMode="decimal" min="0.01" max="1000000000" step="0.01" dir="ltr" value={amount} onChange={e=>setAmount(e.target.value)}/></label>
    </>}
    {!remove&&<label>{cancel?t('تاريخ الإلغاء','Cancellation date'):t('التاريخ','Date')}<input required type="date" min={cancel?transfer?.entryDate:undefined} value={entryDate} onChange={e=>setEntryDate(e.target.value)}/></label>}

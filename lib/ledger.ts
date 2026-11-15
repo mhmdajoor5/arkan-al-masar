@@ -1,7 +1,7 @@
 import {z} from 'zod';
 import {db,fail} from './arkan-server';
 import {requireStaff} from './operations-auth';
-import {accountSources,accountDirectory,accountAvailable,addLedgerAccount,changeLedgerAccount} from './ledger-accounts';
+import {accountSources,accountDirectory,accountAvailable,addLedgerAccount,changeLedgerAccount,saveLedgerContact} from './ledger-accounts';
 
 const category=z.enum(['supplier','customer','driver','purchase','management','debt','rent']);
 const date=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(v=>!isNaN(Date.parse(v))&&new Date(v+'T00:00:00Z').toISOString().slice(0,10)===v);
@@ -143,6 +143,10 @@ export async function ledgerState(categoryValue='',query='',exportAll=false,part
   db().prepare('SELECT id,category,party,entry_date entryDate,statement,description,debit,credit,created,actor,SUM(credit-debit) OVER (ORDER BY entry_date,created,id ROWS UNBOUNDED PRECEDING) running FROM ledger_entries'+where+' ORDER BY entry_date DESC,created DESC,id DESC LIMIT '+(exportAll?10001:500)).bind(...args)
  ]);
  if(exportAll&&Number((summary.results[0] as any)?.count)>10000)fail('LEDGER_EXPORT_LIMIT',400);
+ // A transfer posts a debit on one account and a matching credit on the other.
+ // When both legs are in this view they are internal movement, not new debit
+ // or credit, so drop them from the totals (the balance is unchanged).
+ const transferLegs=await db().prepare('SELECT id FROM ledger_entries'+where+' AND '+transferLinked).bind(...args).all<{id:string}>();
  const options=await db().prepare("SELECT data FROM entities WHERE kind='ledger_description' ORDER BY id").all();
  const partyRows=await db().prepare(accountDirectory+' ORDER BY category,displayName').all();
  const labels=new Map(partyRows.results.map((p:any)=>[JSON.stringify([p.category,p.name]),p.displayName]));
@@ -150,15 +154,21 @@ export async function ledgerState(categoryValue='',query='',exportAll=false,part
  const attachments=await db().prepare("SELECT id,json_extract(data,'$.entry') entry,json_extract(data,'$.name') name,COALESCE(json_extract(data,'$.type'),'image/jpeg') type FROM entities WHERE kind='ledger_attachment'").all();
  const balances=await db().prepare('SELECT category,party name,COUNT(*) count,SUM(debit) debit,SUM(credit) credit,SUM(credit-debit) balance FROM ledger_entries GROUP BY category,party').all();
  const transfers=await db().prepare("SELECT data FROM entities WHERE kind='ledger_transfer'").all<{data:string}>();
- const links=new Map<string,any>();
+ const links=new Map<string,any>(),inView=new Set(transferLegs.results.map(row=>row.id)),totals={...(summary.results[0] as any)},transferPairs:{from:{category:string;name:string};to:{category:string;name:string};amount:number}[]=[];
+ const legs=new Map((await db().prepare('SELECT id,debit+credit amount FROM ledger_entries WHERE '+transferLinked).all<{id:string;amount:number}>()).results.map(row=>[row.id,Number(row.amount)]));
  for(const row of transfers.results){
   const value=JSON.parse(row.data),request=JSON.parse(value.request);
+  for(const [a,b] of [[value.fromEntryId,value.toEntryId],[value.reversalFromEntryId,value.reversalToEntryId]]){
+   if(!a||!b||!legs.has(a)||!legs.has(b))continue;
+   transferPairs.push({from:{category:request.from.category,name:request.from.name},to:{category:request.to.category,name:request.to.name},amount:legs.get(a)!});
+   if(inView.has(a)&&inView.has(b)){totals.debit-=legs.get(a)!;totals.credit-=legs.get(a)!}
+  }
   const transfer={id:value.id,revision:value.revision||0,status:value.status||'active',...request,from:{...request.from,displayName:displayName(request.from)},to:{...request.to,displayName:displayName(request.to)},cancelReason:value.cancelReason,cancelDate:value.cancelDate};
   for(const [entryId,peer,reversal] of [[value.fromEntryId,request.to,false],[value.toEntryId,request.from,false],[value.reversalFromEntryId,request.to,true],[value.reversalToEntryId,request.from,true]]){
    if(entryId)links.set(entryId,{description:(reversal?'عكس ':'')+'تحويل من '+displayName(request.from)+' إلى '+displayName(request.to),transferId:value.id,transferPeer:{...peer,displayName:displayName(peer)},transfer,transferReversal:reversal,attachmentEntries:[value.fromEntryId,value.toEntryId,value.reversalFromEntryId,value.reversalToEntryId].filter(Boolean)});
   }
  }
- return {accounts:partyRows.results.map((p:any)=>({...p,count:0,debit:0,credit:0,balance:0,...balances.results.find((b:any)=>b.category===p.category&&b.name===p.name)})),parties:partyRows.results.filter((p:any)=>!p.archived),entries:rows.results.map((row:any)=>{const link=links.get(row.id);const {attachmentEntries,...transferFields}=link||{};return{...row,displayParty:displayName({category:row.category,name:row.party}),...transferFields,attachments:attachments.results.filter((a:any)=>a.entry===row.id||attachmentEntries?.includes(a.entry))}}),summary:summary.results[0],descriptions:options.results.map((r:any)=>JSON.parse(r.data).name)};
+ return {accounts:partyRows.results.map((p:any)=>({...p,count:0,debit:0,credit:0,balance:0,...balances.results.find((b:any)=>b.category===p.category&&b.name===p.name)})),parties:partyRows.results.filter((p:any)=>!p.archived),entries:rows.results.map((row:any)=>{const link=links.get(row.id);const {attachmentEntries,...transferFields}=link||{};return{...row,displayParty:displayName({category:row.category,name:row.party}),...transferFields,attachments:attachments.results.filter((a:any)=>a.entry===row.id||attachmentEntries?.includes(a.entry))}}),summary:totals,transferPairs,descriptions:options.results.map((r:any)=>JSON.parse(r.data).name)};
 }
 export async function ledgerAction(body:any){
  const user=await requireStaff(['admin','accountant']);
@@ -166,7 +176,15 @@ export async function ledgerAction(body:any){
  if(body.op==='createLedgerTransfer')return createLedgerTransfer(body,user.email);
  if(body.op==='updateLedgerTransfer'||body.op==='cancelLedgerTransfer')return changeLedgerTransfer(body,user.email);
  if(body.op==='deleteLedgerTransfer')return deleteLedgerTransfer(body,user.email);
- if(body.op==='addLedgerParty')return addLedgerAccount(body);
+ if(body.op==='addLedgerParty')return addLedgerAccount(body,user.email);
+ if(body.op==='saveLedgerContact')return saveLedgerContact(body,user.email);
+ if(body.op==='deleteLedgerAttachment'){
+  const id=z.string().uuid().parse(body.id),row=await db().prepare("SELECT json_extract(data,'$.entry') entry,json_extract(data,'$.name') name FROM entities WHERE id=? AND kind='ledger_attachment'").bind(id).first<{entry:string;name:string}>();
+  if(!row)fail('NOT_FOUND',404);
+  // Keep who removed which receipt; the file itself is gone.
+  await db().batch([db().prepare("DELETE FROM entities WHERE id=? AND kind='ledger_attachment'").bind(id),db().prepare("INSERT INTO entities(id,kind,data) VALUES(?,'ledger_attachment_delete',?) ON CONFLICT(id) DO NOTHING").bind('ledger_attachment_delete:'+id,JSON.stringify({id,entry:row!.entry,name:row!.name,actor:user.email,deleted:Date.now()}))]);
+  return{ok:true};
+ }
  if(body.op==='addLedgerDescription'){const name=z.string().trim().min(1).max(80).parse(body.name).replace(/\s+/g,' ').normalize('NFC');await db().prepare("INSERT INTO entities(id,kind,data) VALUES(?,'ledger_description',?) ON CONFLICT(id) DO NOTHING").bind('ledger_description:'+name.toLocaleLowerCase(),JSON.stringify({name})).run();return{ok:true,name}}
  if(body.op==='saveLedger'){const data=z.object({category,party:z.string().trim().min(1).max(140),entryDate:date,statement:z.string().trim().min(1).max(180),description:z.string().trim().max(1000),debit:z.number().int().min(0).max(100000000000),credit:z.number().int().min(0).max(100000000000)}).refine(value=>(value.debit>0)!==(value.credit>0),{message:'LEDGER_SIDE_REQUIRED'}).parse(body.data);if(body.id){const key=z.string().uuid().parse(body.id);await ensureLedgerEditable(key);const expected=z.object({category:z.string(),party:z.string(),entryDate:z.string(),statement:z.string(),description:z.string(),debit:z.number(),credit:z.number()}).parse(body.expected);const result=await db().prepare('UPDATE ledger_entries SET category=?,party=?,entry_date=?,statement=?,description=?,debit=?,credit=? WHERE id=? AND category=? AND party=? AND entry_date=? AND statement=? AND description=? AND debit=? AND credit=? AND '+accountAvailable+' AND NOT '+transferLinked).bind(data.category,data.party,data.entryDate,data.statement,data.description,data.debit,data.credit,key,expected.category,expected.party,expected.entryDate,expected.statement,expected.description,expected.debit,expected.credit,data.category,data.party).run();if(!result.meta.changes)fail('LEDGER_CHANGED',409);return{ok:true,id:key}}const newId=crypto.randomUUID();const inserted=await db().prepare('INSERT INTO ledger_entries(id,category,party,entry_date,statement,description,debit,credit,created,actor) SELECT ?,?,?,?,?,?,?,?,?,? WHERE '+accountAvailable).bind(newId,data.category,data.party,data.entryDate,data.statement,data.description,data.debit,data.credit,Date.now(),user.email,data.category,data.party).run();if(!inserted.meta.changes)fail('LEDGER_ACCOUNT_ARCHIVED',409);return{ok:true,id:newId}}
  if(body.op==='deleteLedger'){const id=z.string().uuid().parse(body.id);await ensureLedgerEditable(id);await db().batch([db().prepare("DELETE FROM entities WHERE kind='ledger_attachment' AND json_extract(data,'$.entry')=? AND NOT EXISTS(SELECT 1 FROM ledger_entries WHERE id=? AND "+transferLinked+')').bind(id,id),db().prepare('DELETE FROM ledger_entries WHERE id=? AND NOT '+transferLinked).bind(id)]);return{ok:true}}fail('UNKNOWN_ACTION');
