@@ -6,18 +6,33 @@ const normalizedName=z.string().trim().min(1).max(140).transform(value=>value.re
 // The original category/name remains the stable accounting identity. Renaming
 // changes its label everywhere without rewriting amounts, transfers or drivers.
 export const accountSources="SELECT category,party name FROM ledger_entries GROUP BY category,party UNION SELECT json_extract(data,'$.category') category,json_extract(data,'$.name') name FROM entities WHERE kind='ledger_party' UNION SELECT 'driver' category,json_extract(data,'$.name') name FROM entities WHERE kind='driver'";
-export const accountDirectory="SELECT a.category,a.name,COALESCE(json_extract(p.data,'$.displayName'),a.name) displayName,COALESCE(json_extract(p.data,'$.archived'),0) archived,COALESCE(json_extract(p.data,'$.revision'),0) revision FROM ("+accountSources+") a LEFT JOIN entities p ON p.kind='ledger_account' AND json_extract(p.data,'$.category')=a.category AND json_extract(p.data,'$.name')=a.name";
+export const accountDirectory="SELECT a.category,a.name,COALESCE(json_extract(p.data,'$.displayName'),a.name) displayName,COALESCE(json_extract(p.data,'$.archived'),0) archived,COALESCE(json_extract(p.data,'$.revision'),0) revision,COALESCE(json_extract(c.data,'$.phone'),'') phone,COALESCE(json_extract(c.data,'$.email'),'') email FROM ("+accountSources+") a LEFT JOIN entities p ON p.kind='ledger_account' AND json_extract(p.data,'$.category')=a.category AND json_extract(p.data,'$.name')=a.name LEFT JOIN entities c ON c.kind='ledger_contact' AND json_extract(c.data,'$.category')=a.category AND json_extract(c.data,'$.name')=a.name";
 export const accountAvailable="NOT EXISTS(SELECT 1 FROM entities WHERE kind='ledger_account' AND json_extract(data,'$.category')=? AND json_extract(data,'$.name')=? AND json_extract(data,'$.archived')=1)";
 const profileKey=(value:z.infer<typeof account>)=>'ledger_account:'+JSON.stringify([value.category,value.name]);
+// Contact details sit beside the account identity, so a rename keeps them.
+// Phones are stored as digits (Saudi 05… becomes 9665…); both fields are optional.
+const contactPhone=z.string().trim().max(30).transform(value=>{const digits=value.replace(/[٠-٩]/g,d=>String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).replace(/[^\d]/g,'').replace(/^00/,'');return /^05\d{8}$/.test(digits)?'966'+digits.slice(1):/^5\d{8}$/.test(digits)?'966'+digits:digits}).refine(value=>!value||/^\d{7,15}$/.test(value),{message:'LEDGER_CONTACT_PHONE'});
+const contactEmail=z.string().trim().max(180).refine(value=>!value||z.string().email().safeParse(value).success,{message:'LEDGER_CONTACT_EMAIL'}).transform(value=>value.toLowerCase());
+const contact=z.object({phone:contactPhone.optional().default(''),email:contactEmail.optional().default('')});
+function contactStatement(target:z.infer<typeof account>,value:z.infer<typeof contact>,actor:string){
+ return db().prepare("INSERT INTO entities(id,kind,data) SELECT ?,'ledger_contact',? WHERE EXISTS(SELECT 1 FROM ("+accountSources+") WHERE category=? AND name=?) ON CONFLICT(id) DO UPDATE SET data=excluded.data").bind('ledger_contact:'+JSON.stringify([target.category,target.name]),JSON.stringify({...target,...value,updated:Date.now(),updatedBy:actor}),target.category,target.name);
+}
+export async function saveLedgerContact(body:any,actor:string){
+ const target=account.parse(body.account),value=contact.parse(body);
+ const result=await contactStatement(target,value,actor).run();
+ if(!result.meta.changes)fail('LEDGER_ACCOUNT_NOT_FOUND',404);
+ return{ok:true,...value};
+}
 
-export async function addLedgerAccount(body:any){
- const section=account.shape.category.parse(body.category),name=normalizedName.parse(body.name);
+export async function addLedgerAccount(body:any,actor=''){
+ const section=account.shape.category.parse(body.category),name=normalizedName.parse(body.name),details=contact.parse(body);
  const match='category=? AND (lower(name)=lower(?) OR lower(displayName)=lower(?))';
  const key='ledger_party:'+section+':'+name.toLocaleLowerCase();
  await db().prepare("INSERT INTO entities(id,kind,data) SELECT ?,'ledger_party',? WHERE NOT EXISTS(SELECT 1 FROM ("+accountDirectory+') WHERE '+match+') ON CONFLICT(id) DO NOTHING').bind(key,JSON.stringify({category:section,name}),section,name,name).run();
  const saved=await db().prepare('SELECT * FROM ('+accountDirectory+') WHERE '+match+' LIMIT 1').bind(section,name,name).first<any>();
  if(!saved)fail('LEDGER_ACCOUNT_CHANGED',409);
  if(saved.archived)fail('LEDGER_ACCOUNT_ARCHIVED',409);
+ if(details.phone||details.email){await contactStatement({category:saved.category,name:saved.name},details,actor).run();return{ok:true,party:{...saved,...details}}}
  return{ok:true,party:saved};
 }
 
